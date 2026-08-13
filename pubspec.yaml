@@ -35,6 +35,9 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
 
+  # Polices de l'identité Dzair Shipping (Poppins pour le wordmark).
+  google_fonts: ^6.2.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

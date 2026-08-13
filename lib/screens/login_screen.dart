@@ -38,7 +38,6 @@ class _LoginScreenState extends State<LoginScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 const Center(child: DzairLogo(size: 104)),
-                const SizedBox(height: 18),
                 const Center(child: DzairWordmark(fontSize: 30)),
                 const SizedBox(height: 6),
                 
@@ -67,8 +66,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 const SizedBox(height: 22),
                 const Center(
                   child: Text(
-                    'Les comptes voyageurs sont créés par l’administrateur.\n'
-                    'Commerçant ? L’inscription client arrive bientôt.',
+                    "Les comptes voyageurs sont créés par l’administrateur.",
                     textAlign: TextAlign.center,
                     style: TextStyle(color: DzColors.mut, fontSize: 12, height: 1.6),
                   ),

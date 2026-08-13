@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 /// Palette officielle Dzair Shipping (identité verrouillée août 2026).
 class DzColors {
@@ -17,7 +18,12 @@ class DzColors {
 
 ThemeData dzairTheme() {
   final base = ThemeData(brightness: Brightness.dark, useMaterial3: true);
+  // Une seule famille dans toute l'app : Poppins.
+  // La hiérarchie se fait par la graisse (400/500 texte, 600 labels, 700/800 titres et chiffres).
+  final textTheme = GoogleFonts.poppinsTextTheme(base.textTheme)
+      .apply(bodyColor: DzColors.txt, displayColor: DzColors.txt);
   return base.copyWith(
+    textTheme: textTheme,
     scaffoldBackgroundColor: DzColors.bg,
     colorScheme: base.colorScheme.copyWith(
       brightness: Brightness.dark,
@@ -39,7 +45,7 @@ ThemeData dzairTheme() {
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: DzColors.card2,
-      labelStyle: const TextStyle(color: DzColors.mut),
+      labelStyle: GoogleFonts.poppins(color: DzColors.mut, fontWeight: FontWeight.w500),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
         borderSide: const BorderSide(color: DzColors.line),
@@ -57,7 +63,7 @@ ThemeData dzairTheme() {
       style: FilledButton.styleFrom(
         backgroundColor: DzColors.lime,
         foregroundColor: DzColors.inkOnLime,
-        textStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+        textStyle: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 15),
         padding: const EdgeInsets.symmetric(vertical: 16),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
@@ -71,9 +77,9 @@ ThemeData dzairTheme() {
         ),
       ),
       labelTextStyle: WidgetStateProperty.resolveWith(
-        (states) => TextStyle(
+        (states) => GoogleFonts.poppins(
           fontSize: 11,
-          fontWeight: FontWeight.w700,
+          fontWeight: FontWeight.w600,
           color: states.contains(WidgetState.selected) ? DzColors.lime : DzColors.mut,
         ),
       ),
