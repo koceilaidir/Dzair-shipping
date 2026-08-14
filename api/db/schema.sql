@@ -135,6 +135,34 @@ CREATE TABLE IF NOT EXISTS reglages (
 );
 INSERT INTO reglages (id, data) VALUES (1, '{}') ON CONFLICT (id) DO NOTHING;
 
+-- v4 — devise du compte BEA, allocation touristique, solde de devises reporté, vol & visa.
+ALTER TABLE voyageurs ADD COLUMN IF NOT EXISTS devise_compte       TEXT NOT NULL DEFAULT 'USD';
+ALTER TABLE voyageurs ADD COLUMN IF NOT EXISTS allocation_eligible BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE voyageurs ADD COLUMN IF NOT EXISTS allocation_derniere DATE;
+ALTER TABLE voyageurs ADD COLUMN IF NOT EXISTS solde_devises       NUMERIC(14,2) NOT NULL DEFAULT 0;
+ALTER TABLE missions  ADD COLUMN IF NOT EXISTS frais_visa          NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE missions  ADD COLUMN IF NOT EXISTS allocation_utilisee BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE missions  ADD COLUMN IF NOT EXISTS factures_total      NUMERIC(14,2);
+ALTER TABLE missions  ADD COLUMN IF NOT EXISTS heure_depart        TEXT;
+ALTER TABLE missions  ADD COLUMN IF NOT EXISTS heure_arrivee       TEXT;
+
+-- v5 — statut voyageur, argent de poche, demandes de suppression.
+ALTER TABLE voyageurs ADD COLUMN IF NOT EXISTS statut_dispo TEXT NOT NULL DEFAULT 'disponible'
+  CHECK (statut_dispo IN ('disponible','indisponible','limite'));
+ALTER TABLE missions ADD COLUMN IF NOT EXISTS poche_mode TEXT NOT NULL DEFAULT 'cash_da'
+  CHECK (poche_mode IN ('cash_da','rmb_alipay','cash_devise','carte'));
+ALTER TABLE missions ADD COLUMN IF NOT EXISTS poche_frais_carte NUMERIC(12,2) NOT NULL DEFAULT 0;
+
+-- Demandes de suppression d'une mission clôturée (validées par tous les admins).
+CREATE TABLE IF NOT EXISTS demandes_suppression (
+  id          SERIAL PRIMARY KEY,
+  mission_id  INTEGER NOT NULL REFERENCES missions(id) ON DELETE CASCADE,
+  demandeur   INTEGER NOT NULL REFERENCES users(id),
+  approbateurs JSONB NOT NULL DEFAULT '[]', -- ids ayant approuvé
+  statut      TEXT NOT NULL DEFAULT 'en_attente' CHECK (statut IN ('en_attente','approuvee','rejetee')),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE INDEX IF NOT EXISTS idx_missions_voyageur ON missions(voyageur_id);
 CREATE INDEX IF NOT EXISTS idx_missions_statut   ON missions(statut);
 CREATE INDEX IF NOT EXISTS idx_produits_mission  ON produits_mission(mission_id);

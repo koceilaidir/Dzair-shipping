@@ -17,10 +17,18 @@ class _ReglagesScreenState extends State<ReglagesScreen> {
   bool _saving = false;
 
   static const _groupes = [
+    ('Commission & carte', [
+      ('comm_pct_defaut', 'Commission voyageur par défaut (%)'),
+      ('frais_carte_pct', 'Frais carte BEA (% des paiements)'),
+    ]),
     ('Démarches — prix par défaut (DA)', [
       ('prix_premiere', 'Première demande'),
       ('prix_renouvellement', 'Renouvellement'),
       ('prix_visa_double', 'Visa double entrée'),
+    ]),
+    ('Frais de mission par défaut (DA)', [
+      ('frais_depot_visa', 'Frais de dépôt du visa'),
+      ('budget_jour_defaut', 'Argent de poche par jour'),
     ]),
     ('Douane & devises', [
       ('taux_officiel', 'Taux officiel (DA / USD)'),

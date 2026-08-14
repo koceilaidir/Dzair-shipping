@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import '../services/api.dart';
 import '../theme.dart';
 import '../widgets/dzair_logo.dart';
+import 'activite_screen.dart';
 import 'dashboard_screen.dart';
+import 'finance_screen.dart';
 import 'missions_screen.dart';
 import 'reglages_screen.dart';
 import 'voyageurs_screen.dart';
@@ -24,6 +26,8 @@ class _ShellState extends State<Shell> {
     (Icons.group_outlined, 'Voyageurs'),
     (Icons.flight_takeoff_outlined, 'Missions'),
     (Icons.account_balance_wallet_outlined, 'Créances'),
+    (Icons.bar_chart_outlined, 'Finance'),
+    (Icons.history, 'Activité'),
     (Icons.settings_outlined, 'Réglages'),
   ];
 
@@ -31,7 +35,9 @@ class _ShellState extends State<Shell> {
         0 => const DashboardScreen(),
         1 => const VoyageursScreen(),
         2 => const MissionsScreen(),
-        4 => const ReglagesScreen(),
+        4 => const FinanceScreen(),
+        5 => const ActiviteScreen(),
+        6 => const ReglagesScreen(),
         _ => _ModulePlaceholder(title: _items[_tab].$2),
       };
 

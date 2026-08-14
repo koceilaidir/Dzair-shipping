@@ -126,7 +126,7 @@ class _MissionsScreenState extends State<MissionsScreen> {
                         return ListView.separated(
                           padding: const EdgeInsets.fromLTRB(16, 8, 16, 90),
                           itemCount: sorted.length + 1,
-                          separatorBuilder: (_, __) => const SizedBox(height: 8),
+                          separatorBuilder: (_, _) => const SizedBox(height: 8),
                           itemBuilder: (_, i) {
                             if (i == 0) return _sortBar();
                             return _tile(sorted[i - 1] as Map);

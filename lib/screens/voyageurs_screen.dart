@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 import '../services/api.dart';
 import '../theme.dart';
 import '../widgets/date_field.dart';
+import 'voyageur_detail_screen.dart';
 
-/// Module Voyageurs — premier module branché de bout en bout sur l'API.
+/// Module Voyageurs — liste + fiche détaillée en page (maître-détail sur PC).
 class VoyageursScreen extends StatefulWidget {
   const VoyageursScreen({super.key});
 
@@ -14,6 +15,18 @@ class VoyageursScreen extends StatefulWidget {
 class _VoyageursScreenState extends State<VoyageursScreen> {
   List<dynamic>? _list;
   String? _error;
+  int? _selectedId;
+
+  void _open(int id) {
+    final wide = MediaQuery.of(context).size.width >= 950;
+    if (wide) {
+      setState(() => _selectedId = id);
+    } else {
+      Navigator.push(context,
+              MaterialPageRoute(builder: (_) => VoyageurDetailScreen(id: id)))
+          .then((_) => _load());
+    }
+  }
 
   @override
   void initState() {
@@ -47,6 +60,13 @@ class _VoyageursScreenState extends State<VoyageursScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_selectedId != null && MediaQuery.of(context).size.width >= 950) {
+      return VoyageurDetailScreen(
+        id: _selectedId!,
+        embedded: true,
+        onBack: () { setState(() => _selectedId = null); _load(); },
+      );
+    }
     return Scaffold(
       backgroundColor: Colors.transparent,
       floatingActionButton: FloatingActionButton.extended(
@@ -87,6 +107,7 @@ class _VoyageursScreenState extends State<VoyageursScreen> {
                               (num.tryParse('${v['dette_rembourse']}') ?? 0);
                           return Card(
                             child: ListTile(
+                              onTap: () => _open(v['id'] as int),
                               contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
                               leading: CircleAvatar(
                                 backgroundColor: DzColors.card2,
@@ -106,10 +127,7 @@ class _VoyageursScreenState extends State<VoyageursScreen> {
                                   ..._alertesValidite(v),
                                 ],
                               ),
-                              trailing: IconButton(
-                                icon: const Icon(Icons.edit_outlined, color: DzColors.mut, size: 19),
-                                onPressed: () => _openForm(v),
-                              ),
+                              trailing: const Icon(Icons.chevron_right, color: DzColors.mut),
                             ),
                           );
                         },
@@ -135,17 +153,24 @@ class _VoyageursScreenState extends State<VoyageursScreen> {
     if (pass != null) {
       final seuil = DateTime(now.year, now.month + 8, now.day);
       if (pass.isBefore(now)) {
-        badge('🛂 Passeport EXPIRÉ', DzColors.red);
+        badge('Passeport expiré', DzColors.red);
       } else if (pass.isBefore(seuil)) {
-        badge('🛂 Passeport expire le ${dateFr(isoDate(pass))} — renouveler', DzColors.amber);
+        badge('Passeport expire le ${dateFr(isoDate(pass))}', DzColors.amber);
       }
     }
     final aut = parse(v['autorisation_expire']);
     if (aut != null) {
       if (aut.isBefore(now)) {
-        badge('📄 Autorisation ANAE EXPIRÉE', DzColors.red);
+        badge('Autorisation ANAE expirée', DzColors.red);
       } else if (aut.isBefore(now.add(const Duration(days: 60)))) {
-        badge('📄 Autorisation expire le ${dateFr(isoDate(aut))}', DzColors.amber);
+        badge('Autorisation expire le ${dateFr(isoDate(aut))}', DzColors.amber);
+      }
+    }
+    // Allocation touristique : texte seul (sans icône), en lime quand disponible.
+    if (v['allocation_eligible'] == true) {
+      final der = parse(v['allocation_derniere']);
+      if (der == null || now.difference(der).inDays >= 365) {
+        badge('Allocation touristique disponible', DzColors.lime);
       }
     }
     return out;
@@ -154,11 +179,13 @@ class _VoyageursScreenState extends State<VoyageursScreen> {
   Future<void> _openForm([Map? v]) async {
     final nom = TextEditingController(text: v?['nom'] ?? '');
     final tel = TextEditingController(text: v?['tel'] ?? '');
-    final commVal = TextEditingController(text: '${v?['comm_val'] ?? 500}');
+    final commVal = TextEditingController(text: '${v?['comm_val'] ?? 12}');
     final bagages = TextEditingController(text: '${v?['bagages'] ?? 2}');
     final depuis = TextEditingController(text: v?['depuis'] ?? '${DateTime.now().year}');
     final detteMontant = TextEditingController(text: '${v?['dette_montant'] ?? 260000}');
-    String commMode = v?['comm_mode'] ?? 'kg';
+    String commMode = v?['comm_mode'] ?? 'pct';
+    String deviseCompte = v?['devise_compte'] ?? 'USD';
+    bool allocationEligible = v?['allocation_eligible'] ?? true;
     bool detteActive = v?['dette_active'] == true;
     bool saving = false;
     DateTime? passExp = v?['passeport_expire'] == null
@@ -183,6 +210,8 @@ class _VoyageursScreenState extends State<VoyageursScreen> {
             'dette_montant': num.tryParse(detteMontant.text) ?? 0,
             'passeport_expire': passExp == null ? null : isoDate(passExp!),
             'autorisation_expire': autExp == null ? null : isoDate(autExp!),
+            'devise_compte': deviseCompte,
+            'allocation_eligible': allocationEligible,
           };
           try {
             if (v == null) {
@@ -233,11 +262,11 @@ class _VoyageursScreenState extends State<VoyageursScreen> {
                       dropdownColor: DzColors.card2,
                       decoration: const InputDecoration(labelText: 'Commission'),
                       items: const [
-                        DropdownMenuItem(value: 'kg', child: Text('DA / kg')),
                         DropdownMenuItem(value: 'pct', child: Text('% du bénéfice')),
+                        DropdownMenuItem(value: 'kg', child: Text('DA / kg')),
                         DropdownMenuItem(value: 'fixe', child: Text('Montant fixe')),
                       ],
-                      onChanged: (x) => setSt(() => commMode = x ?? 'kg'),
+                      onChanged: (x) => setSt(() => commMode = x ?? 'pct'),
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -245,13 +274,42 @@ class _VoyageursScreenState extends State<VoyageursScreen> {
                       decoration: const InputDecoration(labelText: 'Valeur'))),
                 ]),
                 const SizedBox(height: 10),
-                TextField(
-                  controller: bagages,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                      labelText: 'Valises par défaut',
-                      helperText: 'Poids autorisé de ses missions = valises × 23 kg + 10 kg cabine',
-                      helperStyle: TextStyle(color: DzColors.mut, fontSize: 10.5)),
+                Row(children: [
+                  Expanded(
+                    child: TextField(
+                      controller: bagages,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                          labelText: 'Valises par défaut',
+                          helperText: '= valises × 23 kg + 10 kg cabine',
+                          helperStyle: TextStyle(color: DzColors.mut, fontSize: 10.5)),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  SizedBox(
+                    width: 150,
+                    child: DropdownButtonFormField<String>(
+                      initialValue: deviseCompte,
+                      dropdownColor: DzColors.card2,
+                      decoration: const InputDecoration(labelText: 'Compte BEA en'),
+                      items: const [
+                        DropdownMenuItem(value: 'USD', child: Text('\$ Dollars')),
+                        DropdownMenuItem(value: 'EUR', child: Text('€ Euros')),
+                      ],
+                      onChanged: (x) => setSt(() => deviseCompte = x ?? 'USD'),
+                    ),
+                  ),
+                ]),
+                const SizedBox(height: 6),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  activeThumbColor: DzColors.lime,
+                  title: const Text('Éligible à l’allocation touristique',
+                      style: TextStyle(fontSize: 13.5)),
+                  subtitle: const Text('750 € · une fois par an — l’app te rappelle quand elle redevient disponible',
+                      style: TextStyle(color: DzColors.mut, fontSize: 11)),
+                  value: allocationEligible,
+                  onChanged: (x) => setSt(() => allocationEligible = x),
                 ),
                 const SizedBox(height: 16),
                 Row(children: [
@@ -289,6 +347,48 @@ class _VoyageursScreenState extends State<VoyageursScreen> {
                           child: CircularProgressIndicator(strokeWidth: 2))
                       : Text(v == null ? 'Créer le voyageur' : 'Enregistrer'),
                 ),
+                if (v != null) ...[
+                  const SizedBox(height: 6),
+                  TextButton.icon(
+                    onPressed: saving ? null : () async {
+                      final ok = await showDialog<bool>(
+                        context: ctx,
+                        builder: (c2) => AlertDialog(
+                          backgroundColor: DzColors.card,
+                          title: const Text('Supprimer ce voyageur ?',
+                              style: TextStyle(fontSize: 16)),
+                          content: Text(
+                              '${v['nom']} sera supprimé définitivement.\n'
+                              'Impossible s’il a des missions enregistrées.',
+                              style: const TextStyle(color: DzColors.mut, fontSize: 13)),
+                          actions: [
+                            TextButton(onPressed: () => Navigator.pop(c2, false),
+                                child: const Text('Annuler')),
+                            TextButton(onPressed: () => Navigator.pop(c2, true),
+                                child: const Text('Supprimer',
+                                    style: TextStyle(color: DzColors.red))),
+                          ],
+                        ),
+                      );
+                      if (ok != true) return;
+                      try {
+                        await Api.delete('/voyageurs/${v['id']}');
+                        if (ctx.mounted) Navigator.pop(ctx);
+                        _load();
+                      } on ApiException catch (e) {
+                        if (ctx.mounted) {
+                          ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+                              content: Text(e.message),
+                              backgroundColor: const Color(0xFF3A1512)));
+                        }
+                      }
+                    },
+                    icon: const Icon(Icons.delete_outline,
+                        color: DzColors.red, size: 17),
+                    label: const Text('Supprimer ce voyageur',
+                        style: TextStyle(color: DzColors.red, fontSize: 13)),
+                  ),
+                ],
               ],
                 ),
               ),

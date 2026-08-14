@@ -3,11 +3,27 @@ import helmet from 'helmet';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import 'dotenv/config';
+import fs from 'node:fs';
 import { z } from 'zod';
 import { q } from './db.js';
 import { authRouter, requireAuth, requireRole } from './auth.js';
 import { missionsRouter } from './missions.js';
 import { reglagesRouter } from './reglages.js';
+import { rapportsRouter } from './rapports.js';
+
+// Filets de sécurité : une erreur imprévue se logge, elle ne tue JAMAIS le serveur.
+process.on('unhandledRejection', (err) => console.error('⚠ Rejet non géré :', err));
+process.on('uncaughtException', (err) => console.error('⚠ Exception non gérée :', err));
+
+// Le schéma (100 % idempotent : IF NOT EXISTS partout) est appliqué à chaque démarrage —
+// plus jamais de commande psql manuelle après une mise à jour.
+try {
+  const schema = fs.readFileSync(new URL('../db/schema.sql', import.meta.url), 'utf8');
+  await q(schema);
+  console.log('✓ Schéma de base vérifié/appliqué');
+} catch (err) {
+  console.error('⚠ Application du schéma échouée :', err.message);
+}
 
 const app = express();
 
@@ -23,19 +39,23 @@ app.get('/api/health', (_req, res) => res.json({ ok: true, service: 'dzair-shipp
 app.use('/api/auth', authRouter);
 app.use('/api/missions', missionsRouter);
 app.use('/api/reglages', reglagesRouter);
+app.use('/api/rapports', rapportsRouter);
 
 // --- Voyageurs (admin uniquement) — le modèle à suivre pour tous les modules.
 const voyageurSchema = z.object({
   nom: z.string().min(2).max(120),
   tel: z.string().max(30).optional(),
-  comm_mode: z.enum(['kg', 'pct', 'fixe']).default('kg'),
+  comm_mode: z.enum(['kg', 'pct', 'fixe']).default('pct'),
   comm_val: z.number().nonnegative().default(0),
+  statut_dispo: z.enum(['disponible', 'indisponible', 'limite']).default('disponible'),
   bagages: z.number().int().min(1).max(4).default(2),
   depuis: z.string().max(20).optional(),
   dette_active: z.boolean().default(false),
   dette_montant: z.number().nonnegative().default(0),
   passeport_expire: z.string().max(10).nullable().optional(),
   autorisation_expire: z.string().max(10).nullable().optional(),
+  devise_compte: z.enum(['USD', 'EUR']).default('USD'),
+  allocation_eligible: z.boolean().default(true),
 });
 
 app.get('/api/voyageurs', requireAuth, requireRole('admin'), async (_req, res) => {
@@ -49,10 +69,12 @@ app.post('/api/voyageurs', requireAuth, requireRole('admin'), async (req, res) =
   const v = parsed.data;
   const { rows } = await q(
     `INSERT INTO voyageurs (nom, tel, comm_mode, comm_val, bagages, depuis, dette_active,
-       dette_montant, passeport_expire, autorisation_expire)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+       dette_montant, passeport_expire, autorisation_expire, devise_compte, allocation_eligible,
+       statut_dispo)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
     [v.nom, v.tel ?? null, v.comm_mode, v.comm_val, v.bagages, v.depuis ?? null,
-     v.dette_active, v.dette_montant, v.passeport_expire ?? null, v.autorisation_expire ?? null],
+     v.dette_active, v.dette_montant, v.passeport_expire ?? null, v.autorisation_expire ?? null,
+     v.devise_compte, v.allocation_eligible, v.statut_dispo],
   );
   await q(
     `INSERT INTO audit_log (user_id, action, entite, entite_id, details)
@@ -82,10 +104,12 @@ app.put('/api/voyageurs/:id', requireAuth, requireRole('admin'), async (req, res
   }
   const { rows } = await q(
     `UPDATE voyageurs SET nom=$1, tel=$2, comm_mode=$3, comm_val=$4, bagages=$5,
-       depuis=$6, dette_active=$7, dette_montant=$8, passeport_expire=$9, autorisation_expire=$10
-     WHERE id=$11 RETURNING *`,
+       depuis=$6, dette_active=$7, dette_montant=$8, passeport_expire=$9, autorisation_expire=$10,
+       devise_compte=$11, allocation_eligible=$12, statut_dispo=$13
+     WHERE id=$14 RETURNING *`,
     [v.nom, v.tel ?? null, v.comm_mode, v.comm_val, v.bagages, v.depuis ?? null,
-     v.dette_active, v.dette_montant, v.passeport_expire ?? null, v.autorisation_expire ?? null, id],
+     v.dette_active, v.dette_montant, v.passeport_expire ?? null, v.autorisation_expire ?? null,
+     v.devise_compte, v.allocation_eligible, v.statut_dispo, id],
   );
   await q(
     `INSERT INTO audit_log (user_id, action, entite, entite_id, details)
@@ -93,6 +117,26 @@ app.put('/api/voyageurs/:id', requireAuth, requireRole('admin'), async (req, res
     [req.user.sub, id, JSON.stringify(parsed.data)],
   );
   res.json(rows[0]);
+});
+
+app.delete('/api/voyageurs/:id', requireAuth, requireRole('admin'), async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Identifiant invalide.' });
+  const n = (await q('SELECT COUNT(*) AS n FROM missions WHERE voyageur_id = $1', [id])).rows[0].n;
+  if (Number(n) > 0) {
+    return res.status(409).json({
+      error: 'Ce voyageur a des missions enregistrées — on ne l’efface pas, son historique compte. Supprime d’abord ses missions si c’était un test.',
+    });
+  }
+  await q('DELETE FROM tranches_devises WHERE voyageur_id = $1', [id]);
+  await q('DELETE FROM remboursements_dette WHERE voyageur_id = $1', [id]);
+  await q('DELETE FROM historique_commissions WHERE voyageur_id = $1', [id]);
+  const r = await q('DELETE FROM voyageurs WHERE id = $1 RETURNING nom', [id]);
+  if (!r.rows[0]) return res.status(404).json({ error: 'Voyageur introuvable.' });
+  await q(`INSERT INTO audit_log (user_id, action, entite, entite_id, details)
+           VALUES ($1,'delete','voyageur',$2,$3)`,
+    [req.user.sub, id, JSON.stringify({ nom: r.rows[0].nom })]);
+  res.json({ ok: true });
 });
 
 // ---------- Gestion d'erreurs ----------

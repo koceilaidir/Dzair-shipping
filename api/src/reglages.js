@@ -4,9 +4,13 @@ import { requireAuth, requireRole } from './auth.js';
 
 /** Valeurs par défaut — modifiables dans l'écran Réglages. */
 export const REGLAGES_DEFAUT = {
+  comm_pct_defaut: 12,         // commission voyageur par défaut (% du bénéfice)
+  frais_carte_pct: 2,          // frais de carte BEA (% des paiements)
   prix_premiere: 15000,        // première demande (DA)
   prix_renouvellement: 5000,   // renouvellement (DA)
   prix_visa_double: 8000,      // visa double entrée (DA)
+  frais_depot_visa: 6800,      // frais de dépôt du visa (DA)
+  budget_jour_defaut: 3000,    // argent de poche par jour (DA)
   taux_officiel: 135,          // DA / USD — pour la douane à l'arrivée
   objectif_devises_usd: 2000,  // à déposer dans le compte BEA par voyage
   seuil_passeport_mois: 8,     // alerte X mois avant péremption du passeport
