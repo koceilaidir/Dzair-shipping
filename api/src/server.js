@@ -1,0 +1,105 @@
+import express from 'express';
+import helmet from 'helmet';
+import cors from 'cors';
+import rateLimit from 'express-rate-limit';
+import 'dotenv/config';
+import { z } from 'zod';
+import { q } from './db.js';
+import { authRouter, requireAuth, requireRole } from './auth.js';
+import { missionsRouter } from './missions.js';
+import { reglagesRouter } from './reglages.js';
+
+const app = express();
+
+// ---------- Sécurité de base ----------
+app.use(helmet());
+app.use(cors({ origin: process.env.CORS_ORIGIN?.split(',') ?? true }));
+app.use(express.json({ limit: '1mb' }));
+app.use(rateLimit({ windowMs: 60 * 1000, max: 300 })); // garde-fou global
+
+// ---------- Routes ----------
+app.get('/api/health', (_req, res) => res.json({ ok: true, service: 'dzair-shipping-api' }));
+
+app.use('/api/auth', authRouter);
+app.use('/api/missions', missionsRouter);
+app.use('/api/reglages', reglagesRouter);
+
+// --- Voyageurs (admin uniquement) — le modèle à suivre pour tous les modules.
+const voyageurSchema = z.object({
+  nom: z.string().min(2).max(120),
+  tel: z.string().max(30).optional(),
+  comm_mode: z.enum(['kg', 'pct', 'fixe']).default('kg'),
+  comm_val: z.number().nonnegative().default(0),
+  bagages: z.number().int().min(1).max(4).default(2),
+  depuis: z.string().max(20).optional(),
+  dette_active: z.boolean().default(false),
+  dette_montant: z.number().nonnegative().default(0),
+  passeport_expire: z.string().max(10).nullable().optional(),
+  autorisation_expire: z.string().max(10).nullable().optional(),
+});
+
+app.get('/api/voyageurs', requireAuth, requireRole('admin'), async (_req, res) => {
+  const { rows } = await q('SELECT * FROM voyageurs ORDER BY nom');
+  res.json(rows);
+});
+
+app.post('/api/voyageurs', requireAuth, requireRole('admin'), async (req, res) => {
+  const parsed = voyageurSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues });
+  const v = parsed.data;
+  const { rows } = await q(
+    `INSERT INTO voyageurs (nom, tel, comm_mode, comm_val, bagages, depuis, dette_active,
+       dette_montant, passeport_expire, autorisation_expire)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+    [v.nom, v.tel ?? null, v.comm_mode, v.comm_val, v.bagages, v.depuis ?? null,
+     v.dette_active, v.dette_montant, v.passeport_expire ?? null, v.autorisation_expire ?? null],
+  );
+  await q(
+    `INSERT INTO audit_log (user_id, action, entite, entite_id, details)
+     VALUES ($1,'create','voyageur',$2,$3)`,
+    [req.user.sub, rows[0].id, JSON.stringify({ nom: v.nom })],
+  );
+  res.status(201).json(rows[0]);
+});
+
+app.put('/api/voyageurs/:id', requireAuth, requireRole('admin'), async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Identifiant invalide.' });
+  const parsed = voyageurSchema.partial().safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues });
+
+  const cur = (await q('SELECT * FROM voyageurs WHERE id = $1', [id])).rows[0];
+  if (!cur) return res.status(404).json({ error: 'Voyageur introuvable.' });
+  const v = { ...cur, ...parsed.data };
+  // Historique des commissions : tout changement est tracé, la compta passée ne bouge pas.
+  if (String(v.comm_mode) !== String(cur.comm_mode) || Number(v.comm_val) !== Number(cur.comm_val)) {
+    await q(
+      `INSERT INTO historique_commissions
+         (voyageur_id, ancien_mode, ancienne_val, nouveau_mode, nouvelle_val, user_id)
+       VALUES ($1,$2,$3,$4,$5,$6)`,
+      [id, cur.comm_mode, cur.comm_val, v.comm_mode, v.comm_val, req.user.sub],
+    );
+  }
+  const { rows } = await q(
+    `UPDATE voyageurs SET nom=$1, tel=$2, comm_mode=$3, comm_val=$4, bagages=$5,
+       depuis=$6, dette_active=$7, dette_montant=$8, passeport_expire=$9, autorisation_expire=$10
+     WHERE id=$11 RETURNING *`,
+    [v.nom, v.tel ?? null, v.comm_mode, v.comm_val, v.bagages, v.depuis ?? null,
+     v.dette_active, v.dette_montant, v.passeport_expire ?? null, v.autorisation_expire ?? null, id],
+  );
+  await q(
+    `INSERT INTO audit_log (user_id, action, entite, entite_id, details)
+     VALUES ($1,'update','voyageur',$2,$3)`,
+    [req.user.sub, id, JSON.stringify(parsed.data)],
+  );
+  res.json(rows[0]);
+});
+
+// ---------- Gestion d'erreurs ----------
+app.use((err, _req, res, _next) => {
+  console.error(err);
+  res.status(500).json({ error: 'Erreur serveur.' }); // jamais de détails internes au client
+});
+
+const port = Number(process.env.PORT || 3000);
+app.listen(port, () => console.log(`✈ API Dzair Shipping sur http://localhost:${port}`));

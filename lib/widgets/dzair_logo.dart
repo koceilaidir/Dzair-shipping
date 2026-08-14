@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import '../theme.dart';
 
 /// Le mark officiel : D arrondi avec l'avion en espace négatif.
@@ -88,7 +87,8 @@ class DzairWordmark extends StatelessWidget {
   Widget build(BuildContext context) {
     return RichText(
       text: TextSpan(
-        style: GoogleFonts.poppins(
+        style: TextStyle(
+          fontFamily: 'Poppins',
           fontSize: fontSize,
           fontWeight: FontWeight.w700,
           letterSpacing: 0,

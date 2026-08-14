@@ -1,9 +1,14 @@
 import 'package:flutter/material.dart';
+import '../services/api.dart';
 import '../theme.dart';
 import '../widgets/dzair_logo.dart';
+import 'dashboard_screen.dart';
+import 'missions_screen.dart';
+import 'reglages_screen.dart';
+import 'voyageurs_screen.dart';
 
-/// Coquille de l'app admin : navigation par onglets.
-/// Chaque module sera branché au fil de la phase 2.
+/// Coquille de l'app admin — navigation adaptative :
+/// sidebar à gauche sur PC/tablette (comme la maquette), barre en bas sur téléphone.
 class Shell extends StatefulWidget {
   const Shell({super.key});
 
@@ -14,91 +19,195 @@ class Shell extends StatefulWidget {
 class _ShellState extends State<Shell> {
   int _tab = 0;
 
-  static const _titles = ['Tableau de bord', 'Voyageurs', 'Missions', 'Créances', 'Réglages'];
+  static const _items = [
+    (Icons.dashboard_outlined, 'Tableau de bord'),
+    (Icons.group_outlined, 'Voyageurs'),
+    (Icons.flight_takeoff_outlined, 'Missions'),
+    (Icons.account_balance_wallet_outlined, 'Créances'),
+    (Icons.settings_outlined, 'Réglages'),
+  ];
+
+  Widget get _content => switch (_tab) {
+        0 => const DashboardScreen(),
+        1 => const VoyageursScreen(),
+        2 => const MissionsScreen(),
+        4 => const ReglagesScreen(),
+        _ => _ModulePlaceholder(title: _items[_tab].$2),
+      };
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        backgroundColor: DzColors.bg,
-        titleSpacing: 16,
-        title: Row(
-          children: [
-            const DzairLogo(size: 30),
-            const SizedBox(width: 10),
-            Text(_titles[_tab],
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
-          ],
-        ),
-      ),
-      body: _tab == 0 ? const _DashboardPlaceholder() : _ModulePlaceholder(title: _titles[_tab]),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _tab,
-        onDestinationSelected: (i) => setState(() => _tab = i),
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.dashboard_outlined), label: 'Tableau'),
-          NavigationDestination(icon: Icon(Icons.group_outlined), label: 'Voyageurs'),
-          NavigationDestination(icon: Icon(Icons.flight_takeoff_outlined), label: 'Missions'),
-          NavigationDestination(icon: Icon(Icons.account_balance_wallet_outlined), label: 'Créances'),
-          NavigationDestination(icon: Icon(Icons.settings_outlined), label: 'Réglages'),
-        ],
-      ),
-    );
+    return LayoutBuilder(builder: (context, c) {
+      final wide = c.maxWidth >= 950;
+
+      if (!wide) {
+        // ---- Téléphone : barre en bas ----
+        return Scaffold(
+          appBar: AppBar(
+            backgroundColor: DzColors.bg,
+            titleSpacing: 16,
+            title: Row(children: [
+              const DzairLogo(size: 30),
+              const SizedBox(width: 10),
+              Text(_items[_tab].$2,
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+            ]),
+          ),
+          body: _content,
+          bottomNavigationBar: NavigationBar(
+            selectedIndex: _tab,
+            onDestinationSelected: (i) => setState(() => _tab = i),
+            destinations: [
+              for (final (ic, label) in _items)
+                NavigationDestination(icon: Icon(ic), label: label.split(' ').first),
+            ],
+          ),
+        );
+      }
+
+      // ---- PC / tablette : sidebar à gauche ----
+      return Scaffold(
+        body: Row(children: [
+          _SideNav(
+            tab: _tab,
+            items: _items,
+            onTap: (i) => setState(() => _tab = i),
+          ),
+          Container(width: 1, color: DzColors.line),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+                child: Row(children: [
+                  Text('Dzair Shipping  /  ',
+                      style: const TextStyle(color: DzColors.mut, fontSize: 12)),
+                  Text(_items[_tab].$2,
+                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                  const Spacer(),
+                  const Icon(Icons.notifications_none, color: DzColors.mut, size: 19),
+                ]),
+              ),
+              Expanded(child: _content),
+            ]),
+          ),
+        ]),
+      );
+    });
   }
 }
 
-class _DashboardPlaceholder extends StatelessWidget {
-  const _DashboardPlaceholder();
+class _SideNav extends StatelessWidget {
+  final int tab;
+  final List<(IconData, String)> items;
+  final ValueChanged<int> onTap;
+  const _SideNav({required this.tab, required this.items, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    final kpis = [
-      ('DA sortis (mois)', '—', DzColors.txt),
-      ('DA encaissés (mois)', '—', DzColors.txt),
-      ('Net agence', '—', DzColors.lime),
-      ('Créances dehors', '—', DzColors.amber),
-    ];
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        const Text('Bienvenue 👋',
-            style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
-        const SizedBox(height: 4),
-        const Text('Les chiffres arriveront avec la connexion à l’API (phase 1).',
-            style: TextStyle(color: DzColors.mut, fontSize: 13)),
-        const SizedBox(height: 16),
-        GridView.count(
-          crossAxisCount: MediaQuery.of(context).size.width > 700 ? 4 : 2,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          mainAxisSpacing: 10,
-          crossAxisSpacing: 10,
-          childAspectRatio: 1.7,
-          children: [
-            for (final (label, value, color) in kpis)
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(14),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(label.toUpperCase(),
-                          style: const TextStyle(
-                              color: DzColors.mut,
-                              fontSize: 9.5,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 1.2)),
-                      const Spacer(),
-                      Text(value,
-                          style: TextStyle(
-                              color: color, fontSize: 24, fontWeight: FontWeight.w800)),
-                    ],
-                  ),
+    return Container(
+      width: 220,
+      color: DzColors.panel,
+      padding: const EdgeInsets.fromLTRB(14, 18, 14, 16),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        // Profil
+        Padding(
+          padding: const EdgeInsets.only(left: 6, bottom: 18),
+          child: Row(children: [
+            CircleAvatar(
+              radius: 17,
+              backgroundColor: DzColors.lime,
+              child: Text((Api.nom ?? 'A').characters.first.toUpperCase(),
+                  style: const TextStyle(
+                      color: DzColors.inkOnLime, fontWeight: FontWeight.w800)),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(Api.nom ?? '',
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
+                Text(Api.role == 'admin' ? 'Administrateur' : (Api.role ?? ''),
+                    style: const TextStyle(color: DzColors.mut, fontSize: 10.5)),
+              ]),
+            ),
+          ]),
+        ),
+        // Recherche
+        Container(
+          margin: const EdgeInsets.only(bottom: 14),
+          padding: const EdgeInsets.symmetric(horizontal: 11),
+          height: 36,
+          decoration: BoxDecoration(
+            color: DzColors.card2,
+            border: Border.all(color: DzColors.line),
+            borderRadius: BorderRadius.circular(9),
+          ),
+          child: const Row(children: [
+            Icon(Icons.search, size: 15, color: DzColors.mut),
+            SizedBox(width: 8),
+            Expanded(
+              child: TextField(
+                style: TextStyle(fontSize: 12.5),
+                decoration: InputDecoration(
+                  isCollapsed: true,
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  filled: false,
+                  hintText: 'Rechercher…',
+                  hintStyle: TextStyle(color: DzColors.mut, fontSize: 12.5),
                 ),
               ),
-          ],
+            ),
+          ]),
         ),
-      ],
+        // Navigation
+        for (var i = 0; i < items.length; i++)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Material(
+              color: i == tab ? DzColors.lime : Colors.transparent,
+              borderRadius: BorderRadius.circular(10),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(10),
+                onTap: () => onTap(i),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  child: Row(children: [
+                    Icon(items[i].$1, size: 17,
+                        color: i == tab ? DzColors.inkOnLime : DzColors.mut),
+                    const SizedBox(width: 10),
+                    Text(items[i].$2,
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: i == tab ? FontWeight.w700 : FontWeight.w500,
+                          color: i == tab ? DzColors.inkOnLime : DzColors.mut,
+                        )),
+                  ]),
+                ),
+              ),
+            ),
+          ),
+        const Spacer(),
+        // Logo bas de sidebar
+        Padding(
+          padding: const EdgeInsets.only(left: 4),
+          child: Row(children: [
+            const DzairLogo(size: 34),
+            const SizedBox(width: 10),
+            RichText(
+              text: const TextSpan(
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800,
+                    color: DzColors.txt),
+                children: [
+                  TextSpan(text: 'Dzair '),
+                  TextSpan(text: 'Shipping', style: TextStyle(color: DzColors.lime)),
+                ],
+              ),
+            ),
+          ]),
+        ),
+      ]),
     );
   }
 }

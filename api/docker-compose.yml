@@ -1,0 +1,41 @@
+# Dzair Shipping — environnement complet en une commande :
+#   docker compose up -d
+# Le schéma db/schema.sql est appliqué automatiquement au premier démarrage.
+# Même fichier utilisable en local et sur le VPS (avec un .env différent).
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: dzair
+      POSTGRES_USER: dzair
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-dzair_dev_only}
+    volumes:
+      - dzair_pgdata:/var/lib/postgresql/data
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    ports:
+      - "5432:5432"          # en prod sur le VPS : supprimer cette ligne (DB jamais exposée)
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dzair -d dzair"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: 3000
+      DATABASE_URL: postgres://dzair:${DB_PASSWORD:-dzair_dev_only}@db:5432/dzair
+      JWT_SECRET: ${JWT_SECRET:?Definis JWT_SECRET dans le fichier .env}
+      JWT_EXPIRES: 12h
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5555}
+    ports:
+      - "3000:3000"
+
+volumes:
+  dzair_pgdata:

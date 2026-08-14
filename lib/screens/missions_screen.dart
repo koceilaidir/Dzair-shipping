@@ -1,0 +1,392 @@
+import 'package:flutter/material.dart';
+import '../services/api.dart';
+import '../theme.dart';
+import '../widgets/date_field.dart';
+import 'mission_detail_screen.dart';
+
+/// Missions — liste + création (vol → multi-voyageurs).
+/// Sur PC/tablette, le détail s'ouvre DANS la zone de contenu (la sidebar reste visible).
+class MissionsScreen extends StatefulWidget {
+  const MissionsScreen({super.key});
+
+  @override
+  State<MissionsScreen> createState() => _MissionsScreenState();
+}
+
+class _MissionsScreenState extends State<MissionsScreen> {
+  List<dynamic>? _list;
+  String? _error;
+  int? _selectedId; // maître-détail (écrans larges)
+  String _sort = 'recent'; // recent | retour | depart
+
+  static const _sorts = {
+    'recent': 'Dernières ajoutées',
+    'retour': 'Retour proche',
+    'depart': 'Date de départ',
+  };
+
+  List<dynamic> get _sorted {
+    final l = [..._list!];
+    switch (_sort) {
+      case 'retour': // celles qui vont bientôt clôturer d'abord, clôturées à la fin
+        l.sort((a, b) {
+          final ca = a['statut'] == 'cloturee' ? 1 : 0;
+          final cb = b['statut'] == 'cloturee' ? 1 : 0;
+          if (ca != cb) return ca - cb;
+          return '${a['retour'] ?? '9999'}'.compareTo('${b['retour'] ?? '9999'}');
+        });
+      case 'depart':
+        l.sort((a, b) => '${b['depart'] ?? ''}'.compareTo('${a['depart'] ?? ''}'));
+      default: // dernières créées en premier
+        l.sort((a, b) => (b['id'] as int).compareTo(a['id'] as int));
+    }
+    return l;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => _error = null);
+    try {
+      final data = await Api.get('/missions');
+      if (mounted) setState(() => _list = data as List);
+    } on ApiException catch (e) {
+      if (mounted) setState(() => _error = e.message);
+    }
+  }
+
+  num _frais(Map m) =>
+      num.parse('${m['billet']}') + num.parse('${m['dem_cout']}') +
+      num.parse('${m['jours']}') * num.parse('${m['budget_jour']}') +
+      num.parse('${m['bea']}') + num.parse('${m['douane']}') + num.parse('${m['autres']}');
+
+  (String, Color) _statut(Map m) {
+    if (m['statut'] == 'cloturee') return ('✓ Clôturée', DzColors.mut);
+    final benef = num.parse('${m['revenu'] ?? 0}') - _frais(m);
+    final pret = num.parse('${m['kg_total'] ?? 0}') > 0 &&
+        benef >= num.parse('${m['objectif'] ?? 0}');
+    return pret ? ('● Prêt', DzColors.lime) : ('● En cours', DzColors.amber);
+  }
+
+  void _open(int id) {
+    final wide = MediaQuery.of(context).size.width >= 950;
+    if (wide) {
+      setState(() => _selectedId = id);
+    } else {
+      Navigator.push(context,
+              MaterialPageRoute(builder: (_) => MissionDetailScreen(id: id)))
+          .then((_) => _load());
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Détail intégré : la sidebar du shell reste en place.
+    if (_selectedId != null && MediaQuery.of(context).size.width >= 950) {
+      return MissionDetailScreen(
+        id: _selectedId!,
+        embedded: true,
+        onBack: () {
+          setState(() => _selectedId = null);
+          _load();
+        },
+      );
+    }
+
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _openCreate,
+        backgroundColor: DzColors.lime,
+        foregroundColor: DzColors.inkOnLime,
+        icon: const Icon(Icons.add),
+        label: const Text('Mission', style: TextStyle(fontWeight: FontWeight.w700)),
+      ),
+      body: RefreshIndicator(
+        color: DzColors.lime,
+        onRefresh: _load,
+        child: _error != null
+            ? _ErrorView(msg: _error!, onRetry: _load)
+            : _list == null
+                ? const Center(child: CircularProgressIndicator(color: DzColors.lime))
+                : _list!.isEmpty
+                    ? ListView(padding: const EdgeInsets.all(24), children: const [
+                        SizedBox(height: 80),
+                        Center(child: Text(
+                            'Aucune mission.\nCrée la première avec le bouton +.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: DzColors.mut, height: 1.6))),
+                      ])
+                    : Builder(builder: (context) {
+                        final sorted = _sorted;
+                        return ListView.separated(
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 90),
+                          itemCount: sorted.length + 1,
+                          separatorBuilder: (_, __) => const SizedBox(height: 8),
+                          itemBuilder: (_, i) {
+                            if (i == 0) return _sortBar();
+                            return _tile(sorted[i - 1] as Map);
+                          },
+                        );
+                      }),
+      ),
+    );
+  }
+
+  Widget _sortBar() => Padding(
+        padding: const EdgeInsets.only(bottom: 2),
+        child: Row(children: [
+          Text('${_list!.length} mission(s)',
+              style: const TextStyle(color: DzColors.mut, fontSize: 12)),
+          const Spacer(),
+          PopupMenuButton<String>(
+            initialValue: _sort,
+            color: DzColors.card2,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            onSelected: (v) => setState(() => _sort = v),
+            itemBuilder: (_) => [
+              for (final e in _sorts.entries)
+                PopupMenuItem(
+                  value: e.key,
+                  child: Row(children: [
+                    Icon(e.key == _sort ? Icons.check : null,
+                        size: 15, color: DzColors.lime),
+                    const SizedBox(width: 8),
+                    Text(e.value, style: const TextStyle(fontSize: 13)),
+                  ]),
+                ),
+            ],
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+              decoration: BoxDecoration(
+                  color: DzColors.card,
+                  border: Border.all(color: DzColors.line),
+                  borderRadius: BorderRadius.circular(99)),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(Icons.swap_vert, size: 14, color: DzColors.mut),
+                const SizedBox(width: 6),
+                Text(_sorts[_sort]!,
+                    style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600)),
+              ]),
+            ),
+          ),
+        ]),
+      );
+
+  Widget _tile(Map m) {
+    final (label, col) = _statut(m);
+    final closed = m['statut'] == 'cloturee';
+    final b = (closed ? num.parse('${m['attendu'] ?? 0}') : num.parse('${m['revenu'] ?? 0}')) -
+        _frais(m);
+    return Card(
+      child: ListTile(
+        onTap: () => _open(m['id'] as int),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        leading: Container(
+          width: 40, height: 40, alignment: Alignment.center,
+          decoration: BoxDecoration(
+              color: col.withValues(alpha: .12),
+              borderRadius: BorderRadius.circular(11)),
+          child: Icon(closed ? Icons.check : Icons.flight_takeoff, color: col, size: 19),
+        ),
+        title: Text('${m['code']} · ${m['voyageur_nom']}',
+            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+        subtitle: Text(
+            '${m['vol'] ?? ''} · ${dateFr(m['depart'])} · '
+            '${num.parse('${m['kg_total'] ?? 0}').toStringAsFixed(1)} kg',
+            style: const TextStyle(color: DzColors.mut, fontSize: 11.5)),
+        trailing: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            if (closed)
+              Text('${b >= 0 ? '+' : ''}${b.toStringAsFixed(0)} DA',
+                  style: TextStyle(color: b >= 0 ? DzColors.lime : DzColors.red,
+                      fontWeight: FontWeight.w700, fontSize: 12.5)),
+            Container(
+              margin: const EdgeInsets.only(top: 3),
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+              decoration: BoxDecoration(
+                  color: col.withValues(alpha: .13),
+                  borderRadius: BorderRadius.circular(99)),
+              child: Text(label,
+                  style: TextStyle(color: col, fontSize: 9.5, fontWeight: FontWeight.w700)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /* ---------------- Création ---------------- */
+
+  Future<void> _openCreate() async {
+    List<dynamic> voyageurs;
+    try {
+      voyageurs = await Api.get('/voyageurs') as List;
+    } on ApiException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      }
+      return;
+    }
+    if (voyageurs.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Ajoute d’abord un voyageur.')));
+      }
+      return;
+    }
+    if (!mounted) return;
+
+    final vol = TextEditingController(text: 'AH — CAN→ALG');
+    final billet = TextEditingController(text: '110000');
+    final objectif = TextEditingController(text: '20000');
+    DateTime depart = DateTime.now();
+    DateTime? retour;
+    String demType = 'multiple';
+    final selected = <int>{};
+    bool saving = false;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(builder: (ctx, setSt) {
+        Future<void> save() async {
+          if (selected.isEmpty || saving) return;
+          setSt(() => saving = true);
+          try {
+            await Api.post('/missions', {
+              'voyageur_ids': selected.toList(),
+              'vol': vol.text.trim(),
+              'depart': isoDate(depart),
+              'retour': retour == null ? null : isoDate(retour!),
+              'billet': num.tryParse(billet.text) ?? 0,
+              'dem_type': demType,
+              'objectif': num.tryParse(objectif.text) ?? 20000,
+            });
+            if (ctx.mounted) Navigator.pop(ctx);
+            _load();
+          } on ApiException catch (e) {
+            setSt(() => saving = false);
+            if (ctx.mounted) {
+              ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+                  content: Text(e.message), backgroundColor: const Color(0xFF3A1512)));
+            }
+          }
+        }
+
+        return Dialog(
+          backgroundColor: DzColors.card,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 480),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(22, 24, 22, 24),
+              child: SingleChildScrollView(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.stretch,
+                    mainAxisSize: MainAxisSize.min, children: [
+                  const Text('Nouvelle mission',
+                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 18),
+                  TextField(controller: vol,
+                      decoration: const InputDecoration(labelText: 'N° de vol / billet')),
+                  const SizedBox(height: 16),
+                  Row(children: [
+                    Expanded(child: DzDateField(
+                        label: 'Départ', value: depart,
+                        onChanged: (d) => setSt(() => depart = d))),
+                    const SizedBox(width: 12),
+                    Expanded(child: DzDateField(
+                        label: 'Retour', value: retour,
+                        onChanged: (d) => setSt(() => retour = d))),
+                  ]),
+                  const SizedBox(height: 16),
+                  Row(children: [
+                    Expanded(child: TextField(controller: billet,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(labelText: 'Billet A/R (DA)'))),
+                    const SizedBox(width: 12),
+                    Expanded(child: TextField(controller: objectif,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(labelText: 'Objectif bénéf'))),
+                  ]),
+                  const SizedBox(height: 16),
+                  DropdownButtonFormField<String>(
+                    initialValue: demType,
+                    dropdownColor: DzColors.card2,
+                    decoration: const InputDecoration(labelText: 'Démarches'),
+                    items: const [
+                      DropdownMenuItem(value: 'premiere', child: Text('Première demande')),
+                      DropdownMenuItem(value: 'renouvellement', child: Text('Renouvellement')),
+                      DropdownMenuItem(value: 'visa_double', child: Text('Visa double entrée')),
+                      DropdownMenuItem(value: 'multiple', child: Text('Visa multiple — rien')),
+                    ],
+                    onChanged: (x) => setSt(() => demType = x ?? 'multiple'),
+                  ),
+                  const SizedBox(height: 20),
+                  const Text('ASSIGNER LES VOYAGEURS',
+                      style: TextStyle(color: DzColors.lime, fontSize: 10,
+                          fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+                  const SizedBox(height: 4),
+                  const Text('Une fiche mission sera créée pour chacun (sa valise, ses frais).',
+                      style: TextStyle(color: DzColors.mut, fontSize: 11)),
+                  const SizedBox(height: 8),
+                  ...voyageurs.map((v) {
+                    final id = v['id'] as int;
+                    final on = selected.contains(id);
+                    return CheckboxListTile(
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                      activeColor: DzColors.lime,
+                      checkColor: DzColors.inkOnLime,
+                      value: on,
+                      onChanged: (x) =>
+                          setSt(() => x! ? selected.add(id) : selected.remove(id)),
+                      title: Text('${v['nom']}', style: const TextStyle(fontSize: 13.5)),
+                      subtitle: Text(
+                          '${v['bagages']} valise(s) → ${(v['bagages'] as int) * 23} kg',
+                          style: const TextStyle(color: DzColors.mut, fontSize: 11)),
+                    );
+                  }),
+                  const SizedBox(height: 16),
+                  FilledButton(
+                    onPressed: saving ? null : save,
+                    child: saving
+                        ? const SizedBox(height: 18, width: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2))
+                        : Text(selected.isEmpty
+                            ? 'Sélectionne au moins un voyageur'
+                            : 'Créer ${selected.length} mission(s)'),
+                  ),
+                ]),
+              ),
+            ),
+          ),
+        );
+      }),
+    );
+  }
+}
+
+class _ErrorView extends StatelessWidget {
+  final String msg;
+  final VoidCallback onRetry;
+  const _ErrorView({required this.msg, required this.onRetry});
+  @override
+  Widget build(BuildContext context) => ListView(
+        padding: const EdgeInsets.all(24),
+        children: [
+          const SizedBox(height: 60),
+          Icon(Icons.cloud_off, color: DzColors.mut.withValues(alpha: .6), size: 44),
+          const SizedBox(height: 12),
+          Center(child: Text(msg, textAlign: TextAlign.center,
+              style: const TextStyle(color: DzColors.mut))),
+          const SizedBox(height: 16),
+          Center(child: TextButton(onPressed: onRetry, child: const Text('Réessayer'))),
+        ],
+      );
+}
