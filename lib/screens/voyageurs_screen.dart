@@ -127,12 +127,35 @@ class _VoyageursScreenState extends State<VoyageursScreen> {
                                   ..._alertesValidite(v),
                                 ],
                               ),
-                              trailing: const Icon(Icons.chevron_right, color: DzColors.mut),
+                              trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                                _statutChip(v),
+                                const SizedBox(width: 6),
+                                const Icon(Icons.chevron_right, color: DzColors.mut),
+                              ]),
                             ),
                           );
                         },
                       ),
       ),
+    );
+  }
+
+  /// Statut de disponibilité, affiché à droite de la liste.
+  /// « Limite » se pose tout seul (2 missions dans le mois) — jamais à la main.
+  Widget _statutChip(Map v) {
+    final (label, c) = switch ('${v['statut_dispo']}') {
+      'indisponible' => ('Indisponible', DzColors.red),
+      'limite' => ('Limite 2/2', DzColors.amber),
+      _ => ('Disponible', DzColors.lime),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+      decoration: BoxDecoration(
+        color: c.withValues(alpha: .12),
+        borderRadius: BorderRadius.circular(99),
+      ),
+      child: Text(label,
+          style: TextStyle(color: c, fontSize: 10, fontWeight: FontWeight.w700)),
     );
   }
 

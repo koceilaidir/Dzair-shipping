@@ -10,6 +10,7 @@ import { authRouter, requireAuth, requireRole } from './auth.js';
 import { missionsRouter } from './missions.js';
 import { reglagesRouter } from './reglages.js';
 import { rapportsRouter } from './rapports.js';
+import { inventaireRouter } from './inventaire.js';
 
 // Filets de sécurité : une erreur imprévue se logge, elle ne tue JAMAIS le serveur.
 process.on('unhandledRejection', (err) => console.error('⚠ Rejet non géré :', err));
@@ -40,6 +41,7 @@ app.use('/api/auth', authRouter);
 app.use('/api/missions', missionsRouter);
 app.use('/api/reglages', reglagesRouter);
 app.use('/api/rapports', rapportsRouter);
+app.use('/api/inventaire', inventaireRouter);
 
 // --- Voyageurs (admin uniquement) — le modèle à suivre pour tous les modules.
 const voyageurSchema = z.object({
@@ -59,8 +61,22 @@ const voyageurSchema = z.object({
 });
 
 app.get('/api/voyageurs', requireAuth, requireRole('admin'), async (_req, res) => {
-  const { rows } = await q('SELECT * FROM voyageurs ORDER BY nom');
-  res.json(rows);
+  // Statut effectif calculé : « limite » se pose et se lève TOUT SEUL selon les
+  // missions du mois (2 max) ; « indisponible » reste un choix de l'admin.
+  const { rows } = await q(`
+    SELECT v.*, COALESCE(mm.n, 0) AS missions_mois,
+           CASE WHEN v.statut_dispo = 'indisponible' THEN 'indisponible'
+                WHEN COALESCE(mm.n, 0) >= 2          THEN 'limite'
+                ELSE 'disponible' END AS statut_effectif
+    FROM voyageurs v
+    LEFT JOIN (
+      SELECT voyageur_id, COUNT(*) AS n FROM missions
+      WHERE statut <> 'annulee'
+        AND to_char(depart, 'YYYY-MM') = to_char(CURRENT_DATE, 'YYYY-MM')
+      GROUP BY voyageur_id
+    ) mm ON mm.voyageur_id = v.id
+    ORDER BY v.nom`);
+  res.json(rows.map((r) => ({ ...r, statut_dispo: r.statut_effectif })));
 });
 
 app.post('/api/voyageurs', requireAuth, requireRole('admin'), async (req, res) => {

@@ -3,8 +3,10 @@ import '../services/api.dart';
 import '../theme.dart';
 import '../widgets/dzair_logo.dart';
 import 'activite_screen.dart';
+import 'chambres_screen.dart';
 import 'dashboard_screen.dart';
 import 'finance_screen.dart';
+import 'inventaire_screen.dart';
 import 'missions_screen.dart';
 import 'reglages_screen.dart';
 import 'voyageurs_screen.dart';
@@ -23,8 +25,10 @@ class _ShellState extends State<Shell> {
 
   static const _items = [
     (Icons.dashboard_outlined, 'Tableau de bord'),
-    (Icons.group_outlined, 'Voyageurs'),
     (Icons.flight_takeoff_outlined, 'Missions'),
+    (Icons.group_outlined, 'Voyageurs'),
+    (Icons.inventory_2_outlined, 'Inventaire'),
+    (Icons.storefront_outlined, 'Chambres'),
     (Icons.account_balance_wallet_outlined, 'Créances'),
     (Icons.bar_chart_outlined, 'Finance'),
     (Icons.history, 'Activité'),
@@ -33,11 +37,13 @@ class _ShellState extends State<Shell> {
 
   Widget get _content => switch (_tab) {
         0 => const DashboardScreen(),
-        1 => const VoyageursScreen(),
-        2 => const MissionsScreen(),
-        4 => const FinanceScreen(),
-        5 => const ActiviteScreen(),
-        6 => const ReglagesScreen(),
+        1 => const MissionsScreen(),
+        2 => const VoyageursScreen(),
+        3 => const InventaireScreen(),
+        4 => const ChambresScreen(),
+        6 => const FinanceScreen(),
+        7 => const ActiviteScreen(),
+        8 => const ReglagesScreen(),
         _ => _ModulePlaceholder(title: _items[_tab].$2),
       };
 
@@ -60,14 +66,40 @@ class _ShellState extends State<Shell> {
             ]),
           ),
           body: _content,
-          bottomNavigationBar: NavigationBar(
-            selectedIndex: _tab,
-            onDestinationSelected: (i) => setState(() => _tab = i),
-            destinations: [
-              for (final (ic, label) in _items)
-                NavigationDestination(icon: Icon(ic), label: label.split(' ').first),
-            ],
-          ),
+          // 5 onglets principaux + « Plus » (les autres modules dans une feuille).
+          bottomNavigationBar: Builder(builder: (context) {
+            const principaux = [0, 1, 2, 3, 4];
+            final sel = principaux.indexOf(_tab);
+            return NavigationBar(
+              selectedIndex: sel < 0 ? 5 : sel,
+              onDestinationSelected: (i) async {
+                if (i < principaux.length) { setState(() => _tab = principaux[i]); return; }
+                final choix = await showModalBottomSheet<int>(
+                  context: context,
+                  backgroundColor: DzColors.card,
+                  shape: const RoundedRectangleBorder(
+                      borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+                  builder: (_) => SafeArea(child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    const SizedBox(height: 10),
+                    for (var k = 0; k < _items.length; k++)
+                      if (!principaux.contains(k))
+                        ListTile(
+                          leading: Icon(_items[k].$1, color: k == _tab ? DzColors.lime : DzColors.mut),
+                          title: Text(_items[k].$2),
+                          onTap: () => Navigator.pop(context, k),
+                        ),
+                    const SizedBox(height: 8),
+                  ])),
+                );
+                if (choix != null) setState(() => _tab = choix);
+              },
+              destinations: [
+                for (final k in principaux)
+                  NavigationDestination(icon: Icon(_items[k].$1), label: _items[k].$2.split(' ').first),
+                const NavigationDestination(icon: Icon(Icons.more_horiz), label: 'Plus'),
+              ],
+            );
+          }),
         );
       }
 

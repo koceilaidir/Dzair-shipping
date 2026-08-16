@@ -19,7 +19,7 @@ class _ReglagesScreenState extends State<ReglagesScreen> {
   static const _groupes = [
     ('Commission & carte', [
       ('comm_pct_defaut', 'Commission voyageur par défaut (%)'),
-      ('frais_carte_pct', 'Frais carte BEA (% des paiements)'),
+      ('frais_carte_pct', 'Taxes de carte au retrait (% des retraits)'),
     ]),
     ('Démarches — prix par défaut (DA)', [
       ('prix_premiere', 'Première demande'),
@@ -31,7 +31,10 @@ class _ReglagesScreenState extends State<ReglagesScreen> {
       ('budget_jour_defaut', 'Argent de poche par jour'),
     ]),
     ('Douane & devises', [
-      ('taux_officiel', 'Taux officiel (DA / USD)'),
+      ('taux_officiel', 'Taux officiel (DA / USD) — pour la douane'),
+      ('taux_parallele_usd', 'Taux parallèle (DA / USD) — coût réel des taxes de carte'),
+      ('taux_parallele_eur', 'Taux parallèle (DA / EUR)'),
+      ('taux_rmb', 'Taux RMB (DA / ¥) — pour les pièces manquantes'),
       ('objectif_devises_usd', 'Objectif devises par voyage (USD)'),
     ]),
     ('Seuils d’alerte', [

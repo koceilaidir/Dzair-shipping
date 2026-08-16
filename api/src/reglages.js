@@ -12,6 +12,9 @@ export const REGLAGES_DEFAUT = {
   frais_depot_visa: 6800,      // frais de dépôt du visa (DA)
   budget_jour_defaut: 3000,    // argent de poche par jour (DA)
   taux_officiel: 135,          // DA / USD — pour la douane à l'arrivée
+  taux_parallele_usd: 250,     // DA / USD au marché parallèle — coût réel des taxes de carte
+  taux_parallele_eur: 270,     // DA / EUR au marché parallèle
+  taux_rmb: 35,                // DA / RMB — pour valoriser les manques (pièces perdues)
   objectif_devises_usd: 2000,  // à déposer dans le compte BEA par voyage
   seuil_passeport_mois: 8,     // alerte X mois avant péremption du passeport
   seuil_autorisation_jours: 60 // alerte X jours avant expiration de l'autorisation

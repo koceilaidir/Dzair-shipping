@@ -163,6 +163,63 @@ CREATE TABLE IF NOT EXISTS demandes_suppression (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- v6 — l'argent de poche devient des tranches (motif 'poche').
+ALTER TABLE tranches_devises DROP CONSTRAINT IF EXISTS tranches_devises_motif_check;
+ALTER TABLE tranches_devises ADD CONSTRAINT tranches_devises_motif_check
+  CHECK (motif IN ('voyage','depot_bloque','poche'));
+
+-- v7 — valise déclarée complète (même non pleine) : verrouille l'ajout et ouvre le check retour.
+ALTER TABLE missions ADD COLUMN IF NOT EXISTS valise_close BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- v8 — Chambres (grossistes en Chine + leur dépôt en Algérie), bons de récupération,
+-- inventaire (lignes en stock) et affectations produit → valise d'une mission.
+CREATE TABLE IF NOT EXISTS chambres (
+  id            SERIAL PRIMARY KEY,
+  nom           TEXT NOT NULL,                        -- nom ou numéro de la chambre
+  ville         TEXT NOT NULL DEFAULT 'Canton',
+  depot_adresse TEXT,                                 -- adresse du dépôt en Algérie
+  depot_wilaya  TEXT,
+  note          TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS chambre_contacts (
+  id         SERIAL PRIMARY KEY,
+  chambre_id INTEGER NOT NULL REFERENCES chambres(id) ON DELETE CASCADE,
+  nom        TEXT NOT NULL,
+  tel        TEXT,
+  role       TEXT                                     -- dépôt / chambre / patron…
+);
+CREATE TABLE IF NOT EXISTS bons (
+  id         SERIAL PRIMARY KEY,
+  chambre_id INTEGER NOT NULL REFERENCES chambres(id),
+  date       DATE NOT NULL DEFAULT CURRENT_DATE,
+  note       TEXT,
+  user_id    INTEGER REFERENCES users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS bon_lignes (
+  id          SERIAL PRIMARY KEY,
+  bon_id      INTEGER NOT NULL REFERENCES bons(id) ON DELETE CASCADE,
+  produit     TEXT NOT NULL,
+  quantite    NUMERIC(10,2) NOT NULL,                 -- pièces récupérées
+  poids_total NUMERIC(10,3) NOT NULL,                 -- kg pour toute la quantité
+  manque_rmb  NUMERIC(12,2) NOT NULL DEFAULT 0,       -- remboursé par pièce perdue (RMB)
+  mode        TEXT NOT NULL DEFAULT 'kg' CHECK (mode IN ('kg','piece')),
+  prix        NUMERIC(12,2) NOT NULL DEFAULT 0        -- DA/kg ou DA/pièce payé par le dépôt
+);
+CREATE TABLE IF NOT EXISTS affectations (
+  id         SERIAL PRIMARY KEY,
+  ligne_id   INTEGER NOT NULL REFERENCES bon_lignes(id) ON DELETE CASCADE,
+  mission_id INTEGER NOT NULL REFERENCES missions(id) ON DELETE CASCADE,
+  quantite   NUMERIC(10,2) NOT NULL,
+  manquants  NUMERIC(10,2) NOT NULL DEFAULT 0,        -- pièces perdues, déclarées à la clôture
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE missions ADD COLUMN IF NOT EXISTS manques_da NUMERIC(14,2) NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS idx_affect_mission ON affectations(mission_id);
+CREATE INDEX IF NOT EXISTS idx_affect_ligne   ON affectations(ligne_id);
+CREATE INDEX IF NOT EXISTS idx_bons_chambre   ON bons(chambre_id);
+
 CREATE INDEX IF NOT EXISTS idx_missions_voyageur ON missions(voyageur_id);
 CREATE INDEX IF NOT EXISTS idx_missions_statut   ON missions(statut);
 CREATE INDEX IF NOT EXISTS idx_produits_mission  ON produits_mission(mission_id);

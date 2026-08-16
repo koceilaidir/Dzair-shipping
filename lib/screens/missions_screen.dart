@@ -59,16 +59,23 @@ class _MissionsScreenState extends State<MissionsScreen> {
     }
   }
 
-  num _frais(Map m) =>
-      num.parse('${m['billet']}') + num.parse('${m['dem_cout']}') +
-      num.parse('${m['jours']}') * num.parse('${m['budget_jour']}') +
-      num.parse('${m['bea']}') + num.parse('${m['douane']}') + num.parse('${m['autres']}');
+  num _nn(Map m, String k) => num.tryParse('${m[k] ?? 0}') ?? 0;
+  // Même formule que le serveur : poche réelle (tranches) sinon jours × budget,
+  // + taxes de carte (fournies par l'API). La marchandise n'est pas une dépense.
+  num _frais(Map m) {
+    final poche = _nn(m, 'poche_da');
+    return _nn(m, 'billet') + _nn(m, 'dem_cout') + _nn(m, 'frais_visa') +
+        (poche > 0 ? poche : _nn(m, 'jours') * _nn(m, 'budget_jour')) +
+        _nn(m, 'douane') + _nn(m, 'taxes_carte') + _nn(m, 'autres') + _nn(m, 'manques_da');
+  }
+  num _benefDe(Map m) {
+    final base = m['statut'] == 'cloturee' ? _nn(m, 'attendu') : _nn(m, 'revenu');
+    return base - _frais(m);
+  }
 
   (String, Color) _statut(Map m) {
     if (m['statut'] == 'cloturee') return ('✓ Clôturée', DzColors.mut);
-    final benef = num.parse('${m['revenu'] ?? 0}') - _frais(m);
-    final pret = num.parse('${m['kg_total'] ?? 0}') > 0 &&
-        benef >= num.parse('${m['objectif'] ?? 0}');
+    final pret = _nn(m, 'kg_total') > 0 && _benefDe(m) >= _nn(m, 'objectif');
     return pret ? ('● Prêt', DzColors.lime) : ('● En cours', DzColors.amber);
   }
 
@@ -126,7 +133,7 @@ class _MissionsScreenState extends State<MissionsScreen> {
                         return ListView.separated(
                           padding: const EdgeInsets.fromLTRB(16, 8, 16, 90),
                           itemCount: sorted.length + 1,
-                          separatorBuilder: (_, _) => const SizedBox(height: 8),
+                          separatorBuilder: (_, __) => const SizedBox(height: 8),
                           itemBuilder: (_, i) {
                             if (i == 0) return _sortBar();
                             return _tile(sorted[i - 1] as Map);
@@ -180,8 +187,7 @@ class _MissionsScreenState extends State<MissionsScreen> {
   Widget _tile(Map m) {
     final (label, col) = _statut(m);
     final closed = m['statut'] == 'cloturee';
-    final b = (closed ? num.parse('${m['attendu'] ?? 0}') : num.parse('${m['revenu'] ?? 0}')) -
-        _frais(m);
+    final b = _benefDe(m);
     return Card(
       child: ListTile(
         onTap: () => _open(m['id'] as int),
@@ -335,21 +341,37 @@ class _MissionsScreenState extends State<MissionsScreen> {
                   const Text('Une fiche mission sera créée pour chacun (sa valise, ses frais).',
                       style: TextStyle(color: DzColors.mut, fontSize: 11)),
                   const SizedBox(height: 8),
+                  // Indisponibles et limite atteinte : jamais suggérés (case grisée).
                   ...voyageurs.map((v) {
                     final id = v['id'] as int;
                     final on = selected.contains(id);
+                    final statut = '${v['statut_dispo'] ?? 'disponible'}';
+                    final bloque = statut != 'disponible';
+                    final motif = statut == 'limite'
+                        ? 'limite atteinte — 2 missions ce mois'
+                        : 'indisponible';
                     return CheckboxListTile(
                       contentPadding: EdgeInsets.zero,
                       dense: true,
                       activeColor: DzColors.lime,
                       checkColor: DzColors.inkOnLime,
-                      value: on,
-                      onChanged: (x) =>
+                      value: on && !bloque,
+                      enabled: !bloque,
+                      onChanged: bloque ? null : (x) =>
                           setSt(() => x! ? selected.add(id) : selected.remove(id)),
-                      title: Text('${v['nom']}', style: const TextStyle(fontSize: 13.5)),
+                      title: Text('${v['nom']}',
+                          style: TextStyle(fontSize: 13.5,
+                              color: bloque ? DzColors.mut.withValues(alpha: .6) : DzColors.txt)),
                       subtitle: Text(
-                          '${v['bagages']} valise(s) → ${(v['bagages'] as int) * 23} kg',
-                          style: const TextStyle(color: DzColors.mut, fontSize: 11)),
+                          bloque
+                              ? motif
+                              : '${v['bagages']} valise(s) → ${(v['bagages'] as int) * 23} kg',
+                          style: TextStyle(
+                              color: bloque
+                                  ? (statut == 'limite' ? DzColors.amber : DzColors.red)
+                                      .withValues(alpha: .8)
+                                  : DzColors.mut,
+                              fontSize: 11)),
                     );
                   }),
                   const SizedBox(height: 16),

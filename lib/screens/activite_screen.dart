@@ -31,14 +31,59 @@ class _ActiviteScreenState extends State<ActiviteScreen> {
         'cloture' => ('a clôturé', Icons.check_circle_outline, DzColors.lime),
         'delete' => ('a supprimé', Icons.delete_outline, DzColors.red),
         'demande_suppression' => ('demande à supprimer', Icons.report_outlined, DzColors.amber),
+        'valise_ajout' => ('a mis dans la valise de', Icons.luggage_outlined, DzColors.lime),
+        'valise_retrait' => ('a retiré de la valise de', Icons.luggage_outlined, DzColors.amber),
+        'tranche' => ('a déposé une tranche sur', Icons.payments_outlined, DzColors.txt),
         _ => (action, Icons.circle_outlined, DzColors.mut),
       };
 
   String _entite(String e) => switch (e) {
-        'mission' => 'une mission',
-        'voyageur' => 'un voyageur',
+        'mission' => 'la mission',
+        'voyageur' => 'le voyageur',
+        'chambre' => 'la chambre',
+        'bon' => 'un bon',
         _ => e,
       };
+
+  String _f(num n) => n.toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d)(?=(\d{3})+$)'), (m) => '${m[1]} ');
+  double _n(dynamic v) => v == null ? 0 : (num.tryParse('$v') ?? 0).toDouble();
+
+  /// Ligne de détail lisible selon l'action et l'entité (quelle mission, quelle chambre, quoi).
+  String _detail(String action, String entite, Map d) {
+    String s(dynamic v) => v == null ? '' : '$v';
+    switch (action) {
+      case 'valise_ajout':
+        return '${s(d['produit'])}${d['quantite'] != null ? ' · ${_f(_n(d['quantite']))} pc' : ''}'
+            '${d['kg'] != null ? ' · ${_n(d['kg']).toStringAsFixed(1)} kg' : ''}'
+            '${d['chambre'] != null ? ' · de ${s(d['chambre'])}' : ''}'
+            '${d['hors_inventaire'] == true ? ' · hors inventaire' : ''}';
+      case 'valise_retrait':
+        return '${s(d['produit'])} · ${_f(_n(d['quantite']))} pc remises en stock';
+      case 'tranche':
+        return '${d['motif'] == 'poche' ? 'argent de poche' : 'marchandise (carte BEA)'} · '
+            '${_f(_n(d['montant']))} ${s(d['devise'])} × ${s(d['taux'])}'
+            '${s(d['source']).isNotEmpty ? ' · ${s(d['source'])}' : ''}';
+      case 'cloture':
+        return 'attendu ${_f(_n(d['attendu']))} DA · commission ${_f(_n(d['commission']))} DA';
+    }
+    if (entite == 'bon') {
+      if (action == 'create') {
+        final prods = (d['produits'] as List?)?.join(', ') ?? '';
+        return 'chambre ${s(d['chambre'])} · ${s(d['lignes'])} produit(s) · '
+            '${_n(d['kg']).toStringAsFixed(1)} kg · ${_f(_n(d['da']))} DA'
+            '${prods.isNotEmpty ? '\n$prods' : ''}';
+      }
+      return 'chambre ${s(d['chambre'])}';
+    }
+    if (entite == 'mission' && action == 'update') {
+      if (d['valise'] != null) return 'valise ${s(d['valise'])}';
+      if (d['check'] != null) return 'check ${s(d['check'])} mis à jour';
+      final ch = (d['champs'] as List?)?.join(', ') ?? '';
+      return ch.isNotEmpty ? 'champs : $ch' : '';
+    }
+    if (entite == 'mission' && action == 'create') return 'voyageur ${s(d['voyageur'])}';
+    return '';
+  }
 
   String _quand(String iso) {
     final d = DateTime.tryParse(iso)?.toLocal();
@@ -80,9 +125,17 @@ class _ActiviteScreenState extends State<ActiviteScreen> {
   }
 
   Widget _tile(Map a) {
-    final (verbe, icon, col) = _style('${a['action']}');
-    final details = a['details'] is Map ? a['details'] as Map : {};
-    final ref = details['code'] ?? details['nom'] ?? '';
+    final action = '${a['action']}';
+    final entite = '${a['entite']}';
+    final (verbe, icon, col) = _style(action);
+    final details = a['details'] is Map ? a['details'] as Map : <String, dynamic>{};
+    // Référence : code de mission (+ voyageur), nom de chambre/voyageur.
+    var ref = '${details['code'] ?? details['nom'] ?? ''}';
+    if (entite == 'mission' && details['voyageur'] != null && (action == 'valise_ajout' || action == 'valise_retrait')) {
+      ref = '${details['voyageur']} ($ref)';
+    }
+    if (entite == 'bon' && details['chambre'] != null && ref.isEmpty) ref = '';
+    final detail = _detail(action, entite, details);
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
@@ -99,12 +152,17 @@ class _ActiviteScreenState extends State<ActiviteScreen> {
             Text.rich(TextSpan(children: [
               TextSpan(text: '${a['auteur'] ?? 'Quelqu’un'} ',
                   style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12.5)),
-              TextSpan(text: '$verbe ${_entite('${a['entite']}')}',
+              TextSpan(text: '$verbe ${_entite(entite)}',
                   style: const TextStyle(fontSize: 12.5, color: DzColors.txt)),
-              if ('$ref'.isNotEmpty)
+              if (ref.isNotEmpty)
                 TextSpan(text: ' $ref',
                     style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: DzColors.lime)),
             ])),
+            if (detail.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Text(detail, style: const TextStyle(color: DzColors.mut, fontSize: 11.5, height: 1.35)),
+              ),
             Text(_quand('${a['created_at']}'),
                 style: const TextStyle(color: DzColors.mut, fontSize: 10.5)),
           ]),

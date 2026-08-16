@@ -24,17 +24,36 @@ rapportsRouter.get('/finance', async (_req, res) => {
 
   // Toutes les missions non annulées avec leurs totaux.
   const missions = (await q(`
-    SELECT m.*, v.nom AS voyageur_nom, v.comm_mode AS v_mode, v.comm_val AS v_val,
+    SELECT m.*, v.nom AS voyageur_nom, v.devise_compte, v.comm_mode AS v_mode, v.comm_val AS v_val,
            COALESCE((SELECT SUM(kg*prix_kg) FROM produits_mission WHERE mission_id=m.id),0) AS revenu,
-           COALESCE((SELECT SUM(usd*taux)   FROM tranches_devises WHERE mission_id=m.id),0) AS marchandise_da,
+           COALESCE((SELECT SUM(usd) FROM tranches_devises
+                     WHERE mission_id=m.id AND motif='voyage'),0) AS marchandise_devise,
+           COALESCE((SELECT SUM(usd*taux) FROM tranches_devises
+                     WHERE mission_id=m.id AND motif='voyage'),0) AS marchandise_da,
+           COALESCE((SELECT SUM(usd*taux) FROM tranches_devises
+                     WHERE mission_id=m.id AND motif='poche'),0)  AS poche_da,
            COALESCE((SELECT SUM(montant)    FROM paiements        WHERE mission_id=m.id),0) AS encaisse
     FROM missions m JOIN voyageurs v ON v.id=m.voyageur_id
     WHERE m.statut <> 'annulee'`)).rows;
 
+  // Même formule que missions.js : poche réelle (tranches) remplace jours × budget,
+  // et les taxes de carte (au taux PARALLÈLE des réglages) sont une dépense —
+  // réelles si facturé, sinon potentielles. La marchandise n'est PAS une dépense.
+  const pct = Number(reglages.frais_carte_pct || 0) / 100;
+  const taxesCarteDe = (m) => {
+    const md = Number(m.marchandise_da), mdev = Number(m.marchandise_devise);
+    const tMoyen = mdev > 0 ? md / mdev : Number(reglages.taux_officiel);
+    const tp = Number(m.devise_compte === 'EUR'
+      ? reglages.taux_parallele_eur : reglages.taux_parallele_usd);
+    const tPar = Number.isFinite(tp) && tp > 0 ? tp : tMoyen;
+    return m.factures_total != null
+      ? Math.round(Number(m.factures_total) * pct * tPar)
+      : Math.round(mdev * pct * tPar);
+  };
   const fraisDe = (m) =>
     Number(m.billet) + Number(m.dem_cout) + Number(m.frais_visa || 0) +
-    Number(m.jours) * Number(m.budget_jour) + Number(m.bea) + Number(m.douane) +
-    Number(m.autres) + Number(m.poche_frais_carte || 0);
+    (Number(m.poche_da) > 0 ? Number(m.poche_da) : Number(m.jours) * Number(m.budget_jour)) +
+    Number(m.douane) + taxesCarteDe(m) + Number(m.autres) + Number(m.manques_da || 0);
 
   let sortis = 0, revenus = 0, netAgence = 0, creances = 0, partVoyageurs = 0;
   const parMois = {};
@@ -42,15 +61,15 @@ rapportsRouter.get('/finance', async (_req, res) => {
 
   for (const m of cloturees) {
     const frais = fraisDe(m);
-    const march = Number(m.marchandise_da);
     const attendu = Number(m.attendu ?? 0);
-    const benef = attendu - frais - march;
+    // Marchandise = argent déplacé, PAS une dépense — ses taxes sont déjà dans frais.
+    const benef = attendu - frais;
     const comm = Number(m.commission ?? 0);
     const primes = Number(m.primes ?? 0);
     const net = benef - comm - primes;
     const solde = attendu - Number(m.encaisse);
 
-    sortis += frais + march;
+    sortis += frais;
     revenus += attendu;
     netAgence += net;
     partVoyageurs += comm + primes;

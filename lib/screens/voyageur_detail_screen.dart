@@ -253,7 +253,8 @@ class _VoyageurDetailScreenState extends State<VoyageurDetailScreen> {
     final detteMontant = TextEditingController(text: '${_n(v['dette_montant']).toStringAsFixed(0)}');
     String commMode = v['comm_mode'] ?? 'pct';
     String deviseCompte = v['devise_compte'] ?? 'USD';
-    String statut = v['statut_dispo'] ?? 'disponible';
+    // « limite » est automatique — on ne l'édite pas, on repart de « disponible ».
+    String statut = v['statut_dispo'] == 'limite' ? 'disponible' : (v['statut_dispo'] ?? 'disponible');
     bool allocationEligible = v['allocation_eligible'] ?? true;
     bool detteActive = v['dette_active'] == true;
     DateTime? passExp = v['passeport_expire'] == null ? null
@@ -306,13 +307,18 @@ class _VoyageurDetailScreenState extends State<VoyageurDetailScreen> {
                     Expanded(child: TextField(controller: tel,
                         decoration: const InputDecoration(labelText: 'Téléphone'))),
                     const SizedBox(width: 12),
+                    // « Limite » n'est jamais choisi à la main : il se pose et se lève
+                    // automatiquement selon les missions du mois (2 max).
                     Expanded(child: DropdownButtonFormField<String>(
-                      initialValue: statut, dropdownColor: DzColors.card2,
-                      decoration: const InputDecoration(labelText: 'Statut'),
+                      initialValue: statut == 'limite' ? 'disponible' : statut,
+                      dropdownColor: DzColors.card2,
+                      decoration: const InputDecoration(
+                          labelText: 'Statut',
+                          helperText: '« Limite » se pose tout seul (2 missions/mois)',
+                          helperStyle: TextStyle(color: DzColors.mut, fontSize: 10)),
                       items: const [
                         DropdownMenuItem(value: 'disponible', child: Text('Disponible')),
                         DropdownMenuItem(value: 'indisponible', child: Text('Indisponible')),
-                        DropdownMenuItem(value: 'limite', child: Text('Limite atteinte')),
                       ],
                       onChanged: (x) => setSt(() => statut = x ?? 'disponible'),
                     )),
