@@ -10,6 +10,7 @@ RUN npm ci --omit=dev
 COPY src ./src
 COPY scripts ./scripts
 COPY db ./db
+COPY fonts ./fonts
 
 # L'API ne tourne jamais en root dans le conteneur.
 USER node

@@ -18,6 +18,9 @@ class _BonScreenState extends State<BonScreen> {
   List<dynamic>? _chambres;
   String? _error;
   Map? _chambre;
+  int? _bonOuvertId;      // bon récent de la chambre (≤ 15 j) → on peut y AJOUTER
+  String? _bonOuvertDate;
+  bool _ajouterAuBon = true; // défaut : ajouter au même bon (passages multiples du séjour)
   final _recherche = TextEditingController();
   DateTime _date = DateTime.now();
   final _note = TextEditingController();
@@ -39,6 +42,21 @@ class _BonScreenState extends State<BonScreen> {
   String _f(num n) => n.toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d)(?=(\d{3})+$)'), (m) => '${m[1]} ');
   List<_LigneCtrl> get _valides => _lignes.where((l) => l.valide).toList();
 
+  /// Chambre choisie : si son dernier bon date de ≤ 15 jours (même séjour),
+  /// on propose d'y AJOUTER les nouveaux produits (défaut).
+  void _choisirChambre(Map c) {
+    int? bonId; String? bonDate;
+    final der = c['dernier_bon'];
+    if (der != null && c['dernier_bon_id'] != null) {
+      final d = DateTime.tryParse('$der'.substring(0, 10));
+      if (d != null && DateTime.now().difference(d).inDays <= 15) {
+        bonId = c['dernier_bon_id'] is int ? c['dernier_bon_id'] : int.tryParse('${c['dernier_bon_id']}');
+        bonDate = '$der';
+      }
+    }
+    setState(() { _chambre = c; _bonOuvertId = bonId; _bonOuvertDate = bonDate; _ajouterAuBon = true; });
+  }
+
   void _fermer() => widget.embedded ? widget.onBack?.call() : Navigator.pop(context);
 
   Future<void> _save() async {
@@ -47,11 +65,14 @@ class _BonScreenState extends State<BonScreen> {
     try {
       await Api.post('/inventaire/bons', {
         'chambre_id': _chambre!['id'], 'date': isoDate(_date), 'note': _note.text.trim(),
+        if (_bonOuvertId != null && _ajouterAuBon) 'bon_id': _bonOuvertId,
         'lignes': [for (final l in _valides) l.body],
       });
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Bon enregistré — ${_valides.length} produit(s) en stock ✓'),
+          content: Text(_bonOuvertId != null && _ajouterAuBon
+              ? '${_valides.length} produit(s) ajoutés au bon du ${dateFr(_bonOuvertDate)} ✓'
+              : 'Bon enregistré — ${_valides.length} produit(s) en stock ✓'),
           backgroundColor: const Color(0xFF1E2A12)));
       _fermer();
     } on ApiException catch (e) {
@@ -116,7 +137,8 @@ class _BonScreenState extends State<BonScreen> {
                           '${((_chambre!['contacts'] as List?) ?? []).map((k) => k['nom']).join(', ')}',
                           style: const TextStyle(color: DzColors.mut, fontSize: 11)),
                     ])),
-                    TextButton(onPressed: () => setState(() => _chambre = null), child: const Text('Changer')),
+                    TextButton(onPressed: () => setState(() { _chambre = null; _bonOuvertId = null; }),
+                        child: const Text('Changer')),
                   ]),
                 )
               : Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -131,7 +153,7 @@ class _BonScreenState extends State<BonScreen> {
                       ActionChip(
                         label: Text('${c['nom']}${(c['depot_wilaya'] ?? '').toString().isNotEmpty ? ' · ${c['depot_wilaya']}' : ''}'),
                         backgroundColor: DzColors.card2, side: const BorderSide(color: DzColors.line),
-                        onPressed: () => setState(() => _chambre = c as Map),
+                        onPressed: () => _choisirChambre(c as Map),
                       ),
                     ActionChip(
                       avatar: const Icon(Icons.add, size: 15, color: DzColors.inkOnLime),
@@ -140,11 +162,48 @@ class _BonScreenState extends State<BonScreen> {
                       labelStyle: const TextStyle(color: DzColors.inkOnLime, fontWeight: FontWeight.w700),
                       onPressed: () async {
                         final c = await showChambreForm(context, nomInitial: _recherche.text.trim());
-                        if (c != null && mounted) setState(() { _chambres = [..._chambres!, c]; _chambre = c; });
+                        if (c != null && mounted) { setState(() => _chambres = [..._chambres!, c]); _choisirChambre(c); }
                       },
                     ),
                   ]),
                 ])),
+          // Passages multiples dans la même chambre pendant le séjour :
+          // par défaut on AJOUTE les produits au bon ouvert, sinon nouveau bon.
+          if (_chambre != null && _bonOuvertId != null) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: DzColors.amber.withValues(alpha: .08),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: DzColors.amber.withValues(alpha: .35)),
+              ),
+              child: Row(children: [
+                const Icon(Icons.history, size: 16, color: DzColors.amber),
+                const SizedBox(width: 10),
+                Expanded(child: Text(
+                    'Un bon est déjà ouvert pour cette chambre (${dateFr(_bonOuvertDate)}).',
+                    style: const TextStyle(fontSize: 12))),
+                SegmentedButton<bool>(
+                  style: ButtonStyle(
+                    visualDensity: VisualDensity.compact,
+                    backgroundColor: WidgetStateProperty.resolveWith((st) =>
+                        st.contains(WidgetState.selected) ? DzColors.lime : DzColors.card),
+                    foregroundColor: WidgetStateProperty.resolveWith((st) =>
+                        st.contains(WidgetState.selected) ? DzColors.inkOnLime : DzColors.mut),
+                    textStyle: const WidgetStatePropertyAll(TextStyle(fontSize: 11, fontWeight: FontWeight.w700)),
+                  ),
+                  showSelectedIcon: false,
+                  segments: const [
+                    ButtonSegment(value: true, label: Text('Ajouter au bon')),
+                    ButtonSegment(value: false, label: Text('Nouveau bon')),
+                  ],
+                  selected: {_ajouterAuBon},
+                  onSelectionChanged: (st) => setState(() => _ajouterAuBon = st.first),
+                ),
+              ]),
+            ),
+          ],
           const SizedBox(height: 12),
           Row(children: [
             Expanded(child: DzDateField(label: 'Date', value: _date, onChanged: (d) => setState(() => _date = d))),

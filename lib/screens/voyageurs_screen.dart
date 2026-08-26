@@ -202,6 +202,9 @@ class _VoyageursScreenState extends State<VoyageursScreen> {
   Future<void> _openForm([Map? v]) async {
     final nom = TextEditingController(text: v?['nom'] ?? '');
     final tel = TextEditingController(text: v?['tel'] ?? '');
+    final nomPass = TextEditingController(text: v?['nom_passeport'] ?? '');
+    final adresse = TextEditingController(text: v?['adresse'] ?? '');
+    final wilaya = TextEditingController(text: v?['wilaya'] ?? '');
     final commVal = TextEditingController(text: '${v?['comm_val'] ?? 12}');
     final bagages = TextEditingController(text: '${v?['bagages'] ?? 2}');
     final depuis = TextEditingController(text: v?['depuis'] ?? '${DateTime.now().year}');
@@ -235,6 +238,9 @@ class _VoyageursScreenState extends State<VoyageursScreen> {
             'autorisation_expire': autExp == null ? null : isoDate(autExp!),
             'devise_compte': deviseCompte,
             'allocation_eligible': allocationEligible,
+            'nom_passeport': nomPass.text.trim(),
+            'adresse': adresse.text.trim(),
+            'wilaya': wilaya.text.trim(),
           };
           try {
             if (v == null) {
@@ -276,6 +282,20 @@ class _VoyageursScreenState extends State<VoyageursScreen> {
                   const SizedBox(width: 10),
                   Expanded(child: TextField(controller: depuis,
                       decoration: const InputDecoration(labelText: 'Membre depuis'))),
+                ]),
+                const SizedBox(height: 16),
+                const Text('IDENTITÉ CLIENT (FACTURES)', style: TextStyle(color: DzColors.lime, fontSize: 10,
+                    fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+                const SizedBox(height: 8),
+                TextField(controller: nomPass, textCapitalization: TextCapitalization.characters,
+                    decoration: const InputDecoration(labelText: 'Nom et prénom (latin, comme sur le passeport)')),
+                const SizedBox(height: 10),
+                Row(children: [
+                  Expanded(flex: 3, child: TextField(controller: adresse,
+                      decoration: const InputDecoration(labelText: 'Adresse en Algérie (latin)'))),
+                  const SizedBox(width: 10),
+                  Expanded(flex: 2, child: TextField(controller: wilaya,
+                      decoration: const InputDecoration(labelText: 'Wilaya'))),
                 ]),
                 const SizedBox(height: 10),
                 Row(children: [

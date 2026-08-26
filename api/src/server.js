@@ -11,6 +11,7 @@ import { missionsRouter } from './missions.js';
 import { reglagesRouter } from './reglages.js';
 import { rapportsRouter } from './rapports.js';
 import { inventaireRouter } from './inventaire.js';
+import { facturesRouter } from './factures.js';
 
 // Filets de sécurité : une erreur imprévue se logge, elle ne tue JAMAIS le serveur.
 process.on('unhandledRejection', (err) => console.error('⚠ Rejet non géré :', err));
@@ -42,6 +43,7 @@ app.use('/api/missions', missionsRouter);
 app.use('/api/reglages', reglagesRouter);
 app.use('/api/rapports', rapportsRouter);
 app.use('/api/inventaire', inventaireRouter);
+app.use('/api/factures', facturesRouter);
 
 // --- Voyageurs (admin uniquement) — le modèle à suivre pour tous les modules.
 const voyageurSchema = z.object({
@@ -58,6 +60,10 @@ const voyageurSchema = z.object({
   autorisation_expire: z.string().max(10).nullable().optional(),
   devise_compte: z.enum(['USD', 'EUR']).default('USD'),
   allocation_eligible: z.boolean().default(true),
+  // Identité client pour les factures (en latin, comme sur le passeport)
+  nom_passeport: z.string().max(160).nullable().optional(),
+  adresse: z.string().max(300).nullable().optional(),
+  wilaya: z.string().max(80).nullable().optional(),
 });
 
 app.get('/api/voyageurs', requireAuth, requireRole('admin'), async (_req, res) => {
@@ -86,11 +92,12 @@ app.post('/api/voyageurs', requireAuth, requireRole('admin'), async (req, res) =
   const { rows } = await q(
     `INSERT INTO voyageurs (nom, tel, comm_mode, comm_val, bagages, depuis, dette_active,
        dette_montant, passeport_expire, autorisation_expire, devise_compte, allocation_eligible,
-       statut_dispo)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+       statut_dispo, nom_passeport, adresse, wilaya)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`,
     [v.nom, v.tel ?? null, v.comm_mode, v.comm_val, v.bagages, v.depuis ?? null,
      v.dette_active, v.dette_montant, v.passeport_expire ?? null, v.autorisation_expire ?? null,
-     v.devise_compte, v.allocation_eligible, v.statut_dispo],
+     v.devise_compte, v.allocation_eligible, v.statut_dispo,
+     v.nom_passeport ?? null, v.adresse ?? null, v.wilaya ?? null],
   );
   await q(
     `INSERT INTO audit_log (user_id, action, entite, entite_id, details)
@@ -121,11 +128,13 @@ app.put('/api/voyageurs/:id', requireAuth, requireRole('admin'), async (req, res
   const { rows } = await q(
     `UPDATE voyageurs SET nom=$1, tel=$2, comm_mode=$3, comm_val=$4, bagages=$5,
        depuis=$6, dette_active=$7, dette_montant=$8, passeport_expire=$9, autorisation_expire=$10,
-       devise_compte=$11, allocation_eligible=$12, statut_dispo=$13
-     WHERE id=$14 RETURNING *`,
+       devise_compte=$11, allocation_eligible=$12, statut_dispo=$13,
+       nom_passeport=$14, adresse=$15, wilaya=$16
+     WHERE id=$17 RETURNING *`,
     [v.nom, v.tel ?? null, v.comm_mode, v.comm_val, v.bagages, v.depuis ?? null,
      v.dette_active, v.dette_montant, v.passeport_expire ?? null, v.autorisation_expire ?? null,
-     v.devise_compte, v.allocation_eligible, v.statut_dispo, id],
+     v.devise_compte, v.allocation_eligible, v.statut_dispo,
+     v.nom_passeport ?? null, v.adresse ?? null, v.wilaya ?? null, id],
   );
   await q(
     `INSERT INTO audit_log (user_id, action, entite, entite_id, details)

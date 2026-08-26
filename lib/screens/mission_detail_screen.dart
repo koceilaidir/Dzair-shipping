@@ -3,6 +3,8 @@ import '../services/api.dart';
 import '../theme.dart';
 import '../widgets/date_field.dart';
 import '../widgets/inventaire_picker.dart';
+import '../widgets/factures_dialog.dart';
+import '../services/download.dart';
 
 /// Détail d'une mission — structure v7 :
 /// KPIs · ((Dépenses + Argent déposé BEA) ‖ Check départ) · Statut de vol ·
@@ -29,6 +31,9 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
   bool _avantDepartRange = false;
   bool _rangeAuto = false; // on replie automatiquement une seule fois, au 1er chargement prêt
   bool _formLibre = false; // formulaire « produit hors inventaire » déplié
+  bool _valiseRange = false; // carte Valise repliée (une fois complète)
+  bool? _volRange;           // carte Vol repliée (null = auto : rangée dès que le vol est passé)
+  List _factures = [];      // factures émises de la mission
   final _nom = TextEditingController();
   final _kg = TextEditingController();
   final _prix = TextEditingController();
@@ -45,6 +50,9 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     ('nourriture', 'Nourriture (5 jours)', false),
   ];
   static const _itemsRetour = [
+    ('factures_dl', 'Factures téléchargées (PDF)', false),
+    ('factures_cachet', 'Factures imprimées et cachetées', false),
+    ('factures_scan', 'Factures scannées', false),
     ('factures_anae', 'Factures chargées sur le site ANAE', false),
     ('qr_colles', 'Codes QR imprimés et collés sur les valises', false),
   ];
@@ -60,11 +68,13 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
       final res = await Future.wait([
         Api.get('/missions/${widget.id}'),
         Api.get('/reglages'),
+        Api.get('/factures?mission=${widget.id}'),
       ]);
       if (!mounted) return;
       setState(() {
         _m = res[0] as Map;
         _reglages = res[1] as Map;
+        _factures = (res[2] as List?) ?? [];
         // 1er chargement d'une fiche déjà prête → cartes avant-départ rangées d'office.
         if (!_rangeAuto) {
           _rangeAuto = true;
@@ -140,6 +150,26 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
   // Le kilo couvre les dépenses (taxes de déplacement incluses) + l'objectif —
   // JAMAIS l'argent de la marchandise lui-même.
   double get _pkMin => _cap > 0 ? (_frais + _obj) / _cap : 0;
+  // Prix minimum RESTANT : ce qu'il reste à couvrir ÷ kilos libres. Baisse à mesure
+  // que la valise se remplit ; 0 quand l'objectif est couvert (tout est bonus).
+  double get _aCouvrir => (_frais + _obj - _revenu) > 0 ? (_frais + _obj - _revenu) : 0;
+  double get _kgLibre => (_cap - _used) > 0 ? (_cap - _used) : 0;
+  double get _pkRestant => _kgLibre > 0 ? _aCouvrir / _kgLibre : 0;
+
+  /* ---------- Étapes : ① Préparer · ② Vol aller · ③ Sur place · ④ Retour ---------- */
+  bool get _volPasse {
+    final d = DateTime.tryParse('${_m!['depart'] ?? ''}'.substring(0, '${_m!['depart'] ?? ''}'.length >= 10 ? 10 : 0));
+    if (d == null) return false;
+    final now = DateTime.now();
+    return !DateTime(now.year, now.month, now.day).isBefore(d);
+  }
+  int get _etape {
+    if (_m!['statut'] == 'cloturee') return 5;         // tout fini
+    if (_valiseClose) return 4;                         // retour
+    if (_departComplet && _volPasse) return 3;          // sur place
+    if (_departComplet) return 2;                       // vol aller
+    return 1;                                           // préparer
+  }
   String get _devise => '${_m!['v_devise'] ?? 'USD'}';
   double get _soldeDevises => _n(_m!['v_solde']);
 
@@ -183,8 +213,68 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
   }
 
   Future<void> _toggleValiseClose() async {
+    final fermer = !_valiseClose;
     try {
-      await Api.put('/missions/${widget.id}', {'valise_close': !_valiseClose});
+      await Api.put('/missions/${widget.id}', {'valise_close': fermer});
+      await _load();
+      // Valise complète = verrou de contenu. S'il reste du non-facturé, on le signale
+      // sans obliger : la facturation suit les paiements carte, pas la fermeture.
+      if (fermer && mounted && _affNonFacturees.isNotEmpty) {
+        _snack('Valise complète ✓ — ${_affNonFacturees.length} produit(s) pas encore facturé(s).');
+      }
+    } on ApiException catch (e) { _snack(e.message); }
+  }
+
+  /// N° de la facture émise qui contient cette affectation (null si pas facturée).
+  int? _factureDe(dynamic affId) {
+    for (final f in _factures) {
+      for (final l in (f['lignes'] as List? ?? [])) {
+        final id = l['affectation_id'];
+        final n = id is int ? id : int.tryParse('$id');
+        if (n == affId) return f['numero'] is int ? f['numero'] : int.tryParse('${f['numero']}');
+      }
+    }
+    return null;
+  }
+
+  /// Produits d'inventaire pas encore sur une facture émise.
+  List get _affNonFacturees {
+    final deja = <int>{};
+    for (final f in _factures) {
+      for (final l in (f['lignes'] as List? ?? [])) {
+        final id = l['affectation_id'];
+        if (id != null) deja.add(id is int ? id : int.tryParse('$id') ?? -1);
+      }
+    }
+    return _aff.where((a) => !deja.contains(a['id'])).toList();
+  }
+
+  Future<void> _facturer() async {
+    final reste = _affNonFacturees;
+    if (reste.isEmpty) return;
+    final ok = await showFacturesDialog(context,
+        missionId: widget.id, affectations: reste,
+        depart: _m!['depart']?.toString().substring(0, 10), retour: _m!['retour']?.toString().substring(0, 10));
+    if (ok) _load();
+  }
+
+  Future<void> _telechargerFacture(Map f) async {
+    try {
+      final bytes = await Api.getBytes('/factures/${f['id']}/pdf');
+      await saveFile('facture-${_m!['code']}-${f['numero']}.pdf', bytes);
+    } catch (e) { _snack('$e'); }
+  }
+
+  Future<void> _telechargerToutes() async {
+    try {
+      final bytes = await Api.getBytes('/factures/mission/${widget.id}/pdf');
+      await saveFile('factures-${_m!['code']}.pdf', bytes);
+    } catch (e) { _snack('$e'); }
+  }
+
+  Future<void> _annulerFacture(Map f) async {
+    try {
+      await Api.delete('/factures/${f['id']}');
       _load();
     } on ApiException catch (e) { _snack(e.message); }
   }
@@ -261,7 +351,12 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
         ? ('✓ Clôturée', DzColors.mut)
         : _m == null
             ? ('…', DzColors.mut)
-            : _pret ? ('● Prêt', DzColors.lime) : ('● En cours', DzColors.amber);
+            : switch (_etape) {
+                1 => ('● Préparation', DzColors.amber),
+                2 => ('● Vol aller', DzColors.amber),
+                3 => _pret ? ('● Sur place · prêt', DzColors.lime) : ('● Sur place', DzColors.amber),
+                _ => ('● Retour', DzColors.lime),
+              };
     return Row(children: [
       Flexible(child: Text(title, overflow: TextOverflow.ellipsis,
           style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700))),
@@ -312,6 +407,8 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     final over = _valDeclaree > 1800000;
     final wide = MediaQuery.of(context).size.width >= 850;
 
+    final e = _etape;
+    final volRange = _volRange ?? (e >= 3);       // ② se range tout seul une fois passé
     return ListView(padding: const EdgeInsets.fromLTRB(16, 10, 16, 32), children: [
       Text('${m['vol'] ?? ''} · ${dateFr(m['depart'])} → ${dateFr(m['retour'])} · '
           '${m['jours']} j · compte ${_devise}',
@@ -321,14 +418,15 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
       if (over)
         _banner(DzColors.red, '⚖ Valeur déclarée > 1 800 000 DA — mission illégale en l’état.'),
 
-      // ---- KPIs raffinés ----
+      // ---- Timeline des 4 étapes ----
+      _timeline(wide),
+      const SizedBox(height: 12),
+
+      // ---- KPIs ----
       _kpiRow(),
       const SizedBox(height: 12),
 
-      // ---- (Dépenses ↑ + Argent déposé BEA ↓) ‖ Check départ ----
-      // IntrinsicHeight + stretch : le check s'étire à la hauteur de la colonne de gauche.
-      // Dès que le check départ est complet, les trois cartes peuvent se RANGER
-      // (repliées sur une ligne de résumé) pour laisser la place à la suite.
+      // ---- ① Préparer : (Dépenses ↑ + Argent BEA ↓) ‖ Check départ — rangeable ----
       if (_avantDepartRange)
         _avantDepartRangeRow(wide)
       else if (wide)
@@ -355,20 +453,34 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
       ],
       const SizedBox(height: 12),
 
-      // ---- Statut du vol ----
-      _sectionVol(closed),
+      // ---- ② Vol aller — rangé une fois passé ----
+      if (volRange) _volResume() else _sectionVol(closed),
       const SizedBox(height: 12),
 
-      // ---- Prix du kilo minimum ----
-      _sectionPrixKilo(),
+      // ---- ③ Sur place : Valise ‖ Factures ----
+      // Les Factures restent TOUJOURS à droite sur PC (une seule section, même
+      // quand la valise est rangée — le résumé prend juste la place de la valise).
+      if (wide)
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Expanded(
+            flex: 11,
+            child: (_valiseClose && _valiseRange) ? _valiseResume() : _sectionValise(closed),
+          ),
+          const SizedBox(width: 12),
+          Expanded(flex: 9, child: _sectionFactures(closed)),
+        ])
+      else ...[
+        if (_valiseClose && _valiseRange) _valiseResume() else _sectionValise(closed),
+        const SizedBox(height: 12),
+        _sectionFactures(closed),
+      ],
       const SizedBox(height: 12),
 
-      // ---- Valise ----
-      _sectionValise(closed),
-      const SizedBox(height: 12),
-
-      // ---- Check avant le retour ----
-      _checklist('Check avant le retour', 'check_retour', _itemsRetour),
+      // ---- ④ Retour : check retour (+ récap si clôturée) ----
+      Opacity(
+        opacity: (_valiseClose || closed) ? 1 : .55,
+        child: _checklist('Check avant le retour', 'check_retour', _itemsRetour),
+      ),
       const SizedBox(height: 16),
 
       if (!closed) ...[
@@ -384,6 +496,89 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
       if (closed) _clotureRecap(),
     ]);
   }
+
+  /* ---------- Timeline des étapes ---------- */
+  Widget _timeline(bool wide) {
+    final e = _etape;
+    final m = _m!;
+    final (f, t) = _avancement('check_depart', _itemsDepart, _autoDepart());
+    final steps = [
+      ('Préparer', 'dépenses · BEA · check $f/$t'),
+      ('Vol aller', '${m['vol'] ?? ''} · ${dateFr(m['depart'])}${(m['heure_arrivee'] ?? '').toString().isNotEmpty ? ' · arrivée ${m['heure_arrivee']}' : ''}'),
+      ('Sur place', 'valise ${_used.toStringAsFixed(1)} / ${_cap.toStringAsFixed(0)} kg · ${_factures.length} facture${_factures.length > 1 ? 's' : ''}'),
+      ('Retour', m['statut'] == 'cloturee' ? 'clôturée' : 'check retour · clôture'),
+    ];
+    Widget dot(int i) {
+      final done = e > i + 1, now = e == i + 1;
+      return Container(
+        width: 26, height: 26, alignment: Alignment.center,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: done ? DzColors.lime : Colors.transparent,
+          border: Border.all(color: (done || now) ? DzColors.lime : DzColors.line, width: 2),
+          boxShadow: now ? [BoxShadow(color: DzColors.lime.withValues(alpha: .18), spreadRadius: 4)] : null,
+        ),
+        child: done
+            ? const Icon(Icons.check, size: 14, color: DzColors.inkOnLime)
+            : Text('${i + 1}', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800,
+                color: now ? DzColors.lime : DzColors.mut)),
+      );
+    }
+    Widget label(int i) => Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+          Text(steps[i].$1, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700,
+              color: e >= i + 1 ? DzColors.txt : DzColors.mut)),
+          Text(steps[i].$2, maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 10.5, color: DzColors.mut)),
+        ]);
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: wide ? 18 : 14, vertical: 14),
+      decoration: BoxDecoration(color: DzColors.card, borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: DzColors.line)),
+      child: wide
+          ? Row(children: [
+              for (var i = 0; i < 4; i++) ...[
+                dot(i), const SizedBox(width: 10), Expanded(child: label(i)),
+                if (i < 3) Container(width: 40, height: 2, margin: const EdgeInsets.symmetric(horizontal: 8),
+                    color: e > i + 1 ? DzColors.lime : DzColors.line),
+              ],
+            ])
+          : Column(children: [
+              for (var i = 0; i < 4; i++)
+                Padding(padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(children: [dot(i), const SizedBox(width: 10), Expanded(child: label(i))])),
+            ]),
+    );
+  }
+
+  /// ② Vol aller rangé : une ligne de résumé.
+  Widget _volResume() {
+    final m = _m!;
+    final hd = '${m['heure_depart'] ?? ''}', ha = '${m['heure_arrivee'] ?? ''}';
+    return _ligneRangee(
+      Icons.flight_takeoff_outlined,
+      '② Vol aller — ${m['vol'] ?? ''} · départ ${dateFr(m['depart'])}${hd.isNotEmpty ? ' $hd' : ''}'
+      ' → arrivée${ha.isNotEmpty ? ' $ha' : ''} · retour ${dateFr(m['retour'])}',
+      onDerouler: () => setState(() => _volRange = false),
+    );
+  }
+
+  Widget _ligneRangee(IconData ic, String texte, {required VoidCallback onDerouler}) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+        decoration: BoxDecoration(color: DzColors.card, borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: DzColors.line)),
+        child: Row(children: [
+          const Icon(Icons.check_circle, size: 14, color: DzColors.lime),
+          const SizedBox(width: 9),
+          Expanded(child: Text(texte, maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: DzColors.mut))),
+          TextButton.icon(
+            onPressed: onDerouler,
+            style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 10), visualDensity: VisualDensity.compact),
+            icon: const Icon(Icons.unfold_more, size: 15),
+            label: const Text('Dérouler', style: TextStyle(fontSize: 12)),
+          ),
+        ]),
+      );
 
   /* ---------- KPIs : dépenses · marchandise · revenu · bénéfice ----------
      Design : icône dans une pastille teintée, grande valeur avec l'unité en
@@ -819,12 +1014,21 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     final hd = '${m['heure_depart'] ?? ''}';
     final ha = '${m['heure_arrivee'] ?? ''}';
     return _card(
-      titre: 'Statut du vol',
-      action: closed ? null : IconButton(
-        onPressed: _editVol,
-        icon: const Icon(Icons.edit_outlined, size: 17, color: DzColors.mut),
-        tooltip: 'Heures du vol',
-      ),
+      titre: '② Vol aller',
+      action: Row(mainAxisSize: MainAxisSize.min, children: [
+        if (_etape >= 3)
+          TextButton.icon(
+            onPressed: () => setState(() => _volRange = true),
+            style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 10), visualDensity: VisualDensity.compact),
+            icon: const Icon(Icons.unfold_less, size: 15),
+            label: const Text('Ranger', style: TextStyle(fontSize: 12)),
+          ),
+        if (!closed) IconButton(
+          onPressed: _editVol,
+          icon: const Icon(Icons.edit_outlined, size: 17, color: DzColors.mut),
+          tooltip: 'Heures du vol',
+        ),
+      ]),
       child: Row(children: [
         _volCol('Départ', hd.isEmpty ? '—' : hd, dateFr(m['depart'])),
         Expanded(
@@ -850,18 +1054,6 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
         Text(date, style: const TextStyle(color: DzColors.mut, fontSize: 10)),
       ]);
 
-  /* ---------- Prix du kilo ---------- */
-  Widget _sectionPrixKilo() => _card(
-        titre: 'Prix du kilo minimum',
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('${_f(_pkMin)} DA/kg',
-              style: const TextStyle(color: DzColors.lime, fontSize: 24, fontWeight: FontWeight.w800)),
-          Text('(${_f(_frais)} dépenses, taxes incluses + ${_f(_obj)} objectif) '
-              '÷ ${_cap.toStringAsFixed(0)} kg — sans l’argent de la marchandise',
-              style: const TextStyle(color: DzColors.mut, fontSize: 11)),
-        ]),
-      );
-
   /* ---------- Valise ---------- */
   Widget _sectionValise(bool closed) {
     final m = _m!;
@@ -872,15 +1064,55 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
       titre: 'Valise — ${_used.toStringAsFixed(1)} / ${_cap.toStringAsFixed(0)} kg'
           '${m['cabine'] == true ? ' (cabine)' : ''}${vClose ? ' · complète ✓' : ''}',
       // Valise complète (même non pleine) → verrouille l'ajout, ouvre le check retour.
-      action: closed || (produits.isEmpty && _aff.isEmpty) ? null : TextButton.icon(
-        onPressed: _toggleValiseClose,
-        style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 10),
-            visualDensity: VisualDensity.compact,
-            foregroundColor: vClose ? DzColors.mut : DzColors.lime),
-        icon: Icon(vClose ? Icons.lock_open_outlined : Icons.lock_outline, size: 15),
-        label: Text(vClose ? 'Rouvrir' : 'Valise complète', style: const TextStyle(fontSize: 12)),
-      ),
+      action: (produits.isEmpty && _aff.isEmpty) ? null : Row(mainAxisSize: MainAxisSize.min, children: [
+        if (vClose)
+          TextButton.icon(
+            onPressed: () => setState(() => _valiseRange = true),
+            style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 10),
+                visualDensity: VisualDensity.compact),
+            icon: const Icon(Icons.unfold_less, size: 15),
+            label: const Text('Ranger', style: TextStyle(fontSize: 12)),
+          ),
+        if (!closed)
+          TextButton.icon(
+            onPressed: _toggleValiseClose,
+            style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 10),
+                visualDensity: VisualDensity.compact,
+                foregroundColor: vClose ? DzColors.mut : DzColors.lime),
+            icon: Icon(vClose ? Icons.lock_open_outlined : Icons.lock_outline, size: 15),
+            label: Text(vClose ? 'Rouvrir' : 'Valise complète', style: const TextStyle(fontSize: 12)),
+          ),
+      ]),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        // ---- Prix minimum RESTANT : baisse à mesure que la valise se remplit ----
+        Container(
+          margin: const EdgeInsets.only(bottom: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          decoration: BoxDecoration(
+            color: (_aCouvrir <= 0 ? DzColors.lime : DzColors.amber).withValues(alpha: .08),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: (_aCouvrir <= 0 ? DzColors.lime : DzColors.amber).withValues(alpha: .35)),
+          ),
+          child: _aCouvrir <= 0
+              ? Row(children: [
+                  const Icon(Icons.check_circle, size: 16, color: DzColors.lime),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text('Objectif couvert — tout ce que tu ajoutes est du bénéfice (${_kgLibre.toStringAsFixed(1)} kg libres).',
+                      style: const TextStyle(color: DzColors.lime, fontSize: 12, fontWeight: FontWeight.w600))),
+                ])
+              : Row(children: [
+                  const Icon(Icons.speed_outlined, size: 16, color: DzColors.amber),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text.rich(TextSpan(children: [
+                    const TextSpan(text: 'Prix min. restant  ', style: TextStyle(color: DzColors.mut, fontSize: 11.5)),
+                    TextSpan(text: '${_f(_pkRestant)} DA/kg', style: const TextStyle(color: DzColors.amber, fontSize: 14, fontWeight: FontWeight.w800)),
+                    TextSpan(text: '   ·  reste ${_kgLibre.toStringAsFixed(1)} kg · ${_f(_aCouvrir)} DA à couvrir',
+                        style: const TextStyle(color: DzColors.mut, fontSize: 11)),
+                    if (_pkRestant < _pkMin - 1)
+                      TextSpan(text: '   (était ${_f(_pkMin)})', style: const TextStyle(color: DzColors.mut, fontSize: 10.5)),
+                  ]))),
+                ]),
+        ),
         ClipRRect(
           borderRadius: BorderRadius.circular(6),
           child: LinearProgressIndicator(
@@ -910,7 +1142,7 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
                 onPressed: () async {
                   final ok = await showInventairePicker(context,
                       missionId: widget.id, kgDispo: reste > 0 ? reste : 0,
-                      manqueDA: (_obj - _benef) > 0 ? (_obj - _benef) : 0, prixKiloMin: _pkMin);
+                      manqueDA: _aCouvrir, prixKiloMin: _pkRestant);
                   if (ok) _load();
                 },
                 icon: const Icon(Icons.inventory_2_outlined, size: 16),
@@ -945,18 +1177,32 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
           final q = _n(a['quantite']), pu = _n(a['poids_unit']), gp = _n(a['gain_piece']);
           final gainKg = pu > 0 ? gp / pu : 0.0;
           final ok = gainKg >= _pkMin;
+          final numFact = _factureDe(a['id']);          // n° de facture si déjà facturé
+          final verrou = numFact != null;
           return Padding(
             padding: const EdgeInsets.symmetric(vertical: 5),
             child: Row(children: [
+              // Dot : lime = sur la facture N, ambre = pas encore facturé.
+              Tooltip(
+                message: verrou ? 'Sur la facture n° $numFact' : 'Pas encore facturé',
+                child: Container(
+                  width: 8, height: 8,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: verrou ? DzColors.lime : DzColors.amber,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text('${a['produit']}', style: const TextStyle(fontSize: 12.5)),
-                Text('${a['chambre_nom']} · ${_f(q)} pc · manque ${_f(_n(a['manque_rmb']))} ¥/pc',
+                Text('${a['chambre_nom']} · ${_f(q)} pc · déclaré ${_n(a['prix_declare']).toStringAsFixed(2)} \$/pc',
                     style: const TextStyle(color: DzColors.mut, fontSize: 10.5)),
               ])),
               Text('${(q * pu).toStringAsFixed(1)} kg  ', style: const TextStyle(color: DzColors.mut, fontSize: 11.5)),
               Text('${_f(q * gp)} DA', style: TextStyle(color: ok ? DzColors.lime : DzColors.txt,
                   fontSize: 12, fontWeight: FontWeight.w600)),
-              if (!closed && !vClose)
+              if (!closed && !vClose && !verrou)
                 IconButton(padding: EdgeInsets.zero, constraints: const BoxConstraints(),
                     tooltip: 'Remettre en stock',
                     onPressed: () => _delAffectation(a['id']),
@@ -964,6 +1210,35 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
             ]),
           );
         }),
+        // Légende des dots (une seule ligne discrète)
+        if (_aff.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Row(children: [
+              Container(width: 7, height: 7, decoration: const BoxDecoration(shape: BoxShape.circle, color: DzColors.lime)),
+              const SizedBox(width: 5),
+              const Text('facturé', style: TextStyle(color: DzColors.mut, fontSize: 10)),
+              const SizedBox(width: 12),
+              Container(width: 7, height: 7, decoration: const BoxDecoration(shape: BoxShape.circle, color: DzColors.amber)),
+              const SizedBox(width: 5),
+              const Text('à facturer', style: TextStyle(color: DzColors.mut, fontSize: 10)),
+            ]),
+          ),
+        // ---- Facturer à tout moment (au fil des paiements carte) ----
+        if (!closed && _affNonFacturees.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: Row(children: [
+              FilledButton.icon(
+                onPressed: _facturer,
+                icon: const Icon(Icons.receipt_long_outlined, size: 16),
+                label: Text('Facturer ${_affNonFacturees.length} produit(s) non facturé(s)'),
+              ),
+              const SizedBox(width: 10),
+              const Expanded(child: Text('date proposée : aujourd’hui (jour du paiement carte)',
+                  style: TextStyle(color: DzColors.mut, fontSize: 10.5))),
+            ]),
+          ),
         ...produits.map((p) {
           final prix = _n(p['prix_kg']);
           final kgTxt = _n(p['kg']).toStringAsFixed(1);
@@ -999,6 +1274,120 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
           Padding(padding: const EdgeInsets.only(top: 6),
               child: OutlinedButton(onPressed: _toggleCabine,
                   child: const Text('+10 kg bagage cabine (dernier recours)'))),
+      ]),
+    );
+  }
+
+  /// Valise rangée : une ligne de résumé.
+  Widget _valiseResume() => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+        decoration: BoxDecoration(color: DzColors.card, borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: DzColors.line)),
+        child: Row(children: [
+          const Icon(Icons.luggage_outlined, size: 16, color: DzColors.lime),
+          const SizedBox(width: 9),
+          Expanded(child: Text(
+              'Valise complète ✓ · ${_used.toStringAsFixed(1)} / ${_cap.toStringAsFixed(0)} kg · '
+              '${_aff.length + (_m!['produits'] as List).length} produit(s) · revenu ${_f(_revenu)} DA',
+              style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600))),
+          TextButton.icon(
+            onPressed: () => setState(() => _valiseRange = false),
+            style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 10),
+                visualDensity: VisualDensity.compact),
+            icon: const Icon(Icons.unfold_more, size: 15),
+            label: const Text('Dérouler', style: TextStyle(fontSize: 12)),
+          ),
+        ]),
+      );
+
+  /// Section Factures : liste des factures émises + PDF + génération du reste.
+  Widget _sectionFactures(bool closed) {
+    final reste = _affNonFacturees;
+    String dateCn(dynamic d) {
+      final s = '$d'.substring(0, 10);
+      return '${s.substring(0, 4)}年${s.substring(5, 7)}月${s.substring(8, 10)}日';
+    }
+    return _card(
+      titre: 'Factures — ${_factures.length}',
+      // Un seul bouton « Facturer » dans toute la fiche : celui de la Valise.
+      // Ici, seulement le téléchargement (sauf valise rangée : raccourci Facturer).
+      action: Row(mainAxisSize: MainAxisSize.min, children: [
+        if (_factures.isNotEmpty)
+          TextButton.icon(
+            onPressed: _telechargerToutes,
+            style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 10),
+                visualDensity: VisualDensity.compact),
+            icon: const Icon(Icons.download_outlined, size: 15),
+            label: const Text('Tout télécharger', style: TextStyle(fontSize: 12)),
+          ),
+        if (!closed && reste.isNotEmpty && _valiseClose && _valiseRange)
+          TextButton.icon(
+            onPressed: _facturer,
+            style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 10),
+                visualDensity: VisualDensity.compact, foregroundColor: DzColors.lime),
+            icon: const Icon(Icons.receipt_long_outlined, size: 15),
+            label: Text('Facturer ${reste.length} produit(s)', style: const TextStyle(fontSize: 12)),
+          ),
+      ]),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        if (_factures.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Text(reste.isEmpty
+                    ? 'Aucune facture pour l’instant — elles se créent au fil des paiements carte, depuis la valise.'
+                    : 'Aucune facture pour l’instant — « Facturer » pour les ${reste.length} produit(s) en valise.',
+                style: const TextStyle(color: DzColors.mut, fontSize: 12)),
+          ),
+        for (final f in _factures)
+          Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.fromLTRB(12, 9, 6, 9),
+            decoration: BoxDecoration(color: DzColors.card2, borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: DzColors.line)),
+            child: Row(children: [
+              Container(width: 34, height: 34, alignment: Alignment.center,
+                  decoration: BoxDecoration(color: DzColors.lime.withValues(alpha: .12), borderRadius: BorderRadius.circular(9)),
+                  child: Text('${f['numero']}', style: const TextStyle(color: DzColors.lime, fontSize: 12.5, fontWeight: FontWeight.w800))),
+              const SizedBox(width: 10),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('发票 ${f['numero']} · ${dateCn(f['date'])}',
+                    style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
+                Text(((f['lignes'] as List?) ?? []).map((l) => '${l['produit']} ×${_f(_n(l['quantite']))}').join(' · '),
+                    maxLines: 2, overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: DzColors.mut, fontSize: 10.5)),
+              ])),
+              Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                Text('${_n(f['total']).toStringAsFixed(2)} \$', style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700)),
+                Text('${_f(_n(f['total_rmb']))} RMB', style: const TextStyle(color: DzColors.mut, fontSize: 10.5)),
+              ]),
+              IconButton(tooltip: 'PDF', onPressed: () => _telechargerFacture(f),
+                  icon: const Icon(Icons.picture_as_pdf_outlined, size: 18, color: DzColors.lime)),
+              if (!closed)
+                IconButton(tooltip: 'Annuler la facture', padding: EdgeInsets.zero, constraints: const BoxConstraints(),
+                    onPressed: () => _annulerFacture(f),
+                    icon: const Icon(Icons.close, size: 15, color: DzColors.red)),
+            ]),
+          ),
+        if (_factures.isNotEmpty) ...[
+          const Padding(
+            padding: EdgeInsets.only(top: 2),
+            child: Text('Une facture par paiement carte, à la date du paiement. Les produits facturés sont '
+                'verrouillés dans la valise ; annuler la facture les libère.',
+                style: TextStyle(color: DzColors.mut, fontSize: 10.5)),
+          ),
+          if (reste.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text('⚠ ${reste.length} produit(s) en valise pas encore facturé(s).',
+                  style: const TextStyle(color: DzColors.amber, fontSize: 10.5, fontWeight: FontWeight.w600)),
+            ),
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text('Total déclaré : ${_factures.fold(0.0, (s, f) => s + _n(f['total'])).toStringAsFixed(2)} \$ '
+                '— sert à la douane et aux taxes de carte à la clôture.',
+                style: const TextStyle(color: DzColors.mut, fontSize: 10.5)),
+          ),
+        ],
       ]),
     );
   }
@@ -1089,8 +1478,8 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
       Row(children: [
         const Icon(Icons.check_circle, size: 14, color: DzColors.lime),
         const SizedBox(width: 6),
-        const Expanded(child: Text('Avant le départ — tout est prêt',
-            style: TextStyle(color: DzColors.lime, fontSize: 11.5, fontWeight: FontWeight.w700))),
+        Expanded(child: Text('① Préparer — tout est prêt · prix du kilo de départ ${_f(_pkMin)} DA/kg',
+            style: const TextStyle(color: DzColors.lime, fontSize: 11.5, fontWeight: FontWeight.w700))),
         TextButton.icon(
           onPressed: () => setState(() => _avantDepartRange = false),
           style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -1334,7 +1723,8 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     final depot = TextEditingController();
     final attendu = TextEditingController(text: _revenu.toStringAsFixed(0));
     final encaisse = TextEditingController(text: _revenu.toStringAsFixed(0));
-    final factures = TextEditingController();
+    final declTotal = _aff.fold(0.0, (s, a) => s + _n(a['quantite']) * _n(a['prix_declare']));
+    final factures = TextEditingController(text: declTotal > 0 ? declTotal.toStringAsFixed(2) : '');
     final primes = TextEditingController(text: '0');
     final invendus = TextEditingController();
     // Pièces manquantes par produit d'inventaire (remboursées au prix du manque en RMB).

@@ -30,6 +30,31 @@ reglagesRouter.use(requireAuth, requireRole('admin'));
 
 reglagesRouter.get('/', async (_req, res) => res.json(await getReglages()));
 
+// Cours OFFICIELS du jour (open.er-api.com, gratuit, sans clé) — cache 12 h.
+// USD/DZD pour le taux officiel, USD/CNY pour convertir les manques ¥ → $.
+let tauxLive = null; // { valeur (DZD), cny (CNY pour 1 USD), date, quand }
+export async function coursOfficiels() {
+  if (tauxLive && Date.now() - tauxLive.quand < 12 * 3600 * 1000) return tauxLive;
+  const r = await fetch('https://open.er-api.com/v6/latest/USD', { signal: AbortSignal.timeout(8000) });
+  const j = await r.json();
+  const dzd = Number(j?.rates?.DZD), cny = Number(j?.rates?.CNY);
+  if (!Number.isFinite(dzd) || dzd <= 0) throw new Error('indisponible');
+  tauxLive = {
+    valeur: Math.round(dzd * 100) / 100,
+    cny: Number.isFinite(cny) && cny > 0 ? Math.round(cny * 100) / 100 : 0,
+    date: j.time_last_update_utc ?? '', quand: Date.now(),
+  };
+  return tauxLive;
+}
+
+reglagesRouter.get('/taux-usd', async (_req, res) => {
+  try {
+    res.json(await coursOfficiels());
+  } catch {
+    res.status(502).json({ error: 'Cours USD/DZD indisponible pour le moment — saisis-le à la main.' });
+  }
+});
+
 reglagesRouter.put('/', async (req, res) => {
   const clean = {};
   for (const k of Object.keys(REGLAGES_DEFAUT)) {

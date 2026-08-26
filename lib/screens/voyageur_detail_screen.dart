@@ -123,6 +123,11 @@ class _VoyageurDetailScreenState extends State<VoyageurDetailScreen> {
 
           // Infos
           _card('Infos', [
+            _row('Nom sur le passeport', '${(v['nom_passeport'] ?? '').toString().isEmpty ? '— à renseigner (factures)' : v['nom_passeport']}',
+                couleur: (v['nom_passeport'] ?? '').toString().isEmpty ? DzColors.amber : DzColors.txt),
+            _row('Adresse (factures)', '${(v['adresse'] ?? '').toString().isEmpty ? '—' : v['adresse']}'
+                '${(v['wilaya'] ?? '').toString().isEmpty ? '' : ', ${v['wilaya']}'}'),
+            _row('Téléphone', '${(v['tel'] ?? '').toString().isEmpty ? '—' : v['tel']}'),
             _row('Commission', _commLabel(v)),
             _row('Compte BEA', '${v['devise_compte'] ?? 'USD'}'),
             _row('Valises', '${v['bagages']}'),
@@ -247,6 +252,9 @@ class _VoyageurDetailScreenState extends State<VoyageurDetailScreen> {
     final v = _v!;
     final nom = TextEditingController(text: v['nom']);
     final tel = TextEditingController(text: v['tel'] ?? '');
+    final nomPass = TextEditingController(text: v['nom_passeport'] ?? '');
+    final adresse = TextEditingController(text: v['adresse'] ?? '');
+    final wilaya = TextEditingController(text: v['wilaya'] ?? '');
     final commVal = TextEditingController(text: '${_n(v['comm_val']).toStringAsFixed(0)}');
     final bagages = TextEditingController(text: '${v['bagages']}');
     final depuis = TextEditingController(text: v['depuis'] ?? '');
@@ -279,6 +287,9 @@ class _VoyageurDetailScreenState extends State<VoyageurDetailScreen> {
               'dette_active': detteActive, 'dette_montant': num.tryParse(detteMontant.text) ?? 0,
               'passeport_expire': passExp == null ? null : isoDate(passExp!),
               'autorisation_expire': autExp == null ? null : isoDate(autExp!),
+              'nom_passeport': nomPass.text.trim(),
+              'adresse': adresse.text.trim(),
+              'wilaya': wilaya.text.trim(),
             });
             if (ctx.mounted) Navigator.pop(ctx);
             _load();
@@ -302,6 +313,20 @@ class _VoyageurDetailScreenState extends State<VoyageurDetailScreen> {
                       style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
                   const SizedBox(height: 18),
                   TextField(controller: nom, decoration: const InputDecoration(labelText: 'Nom complet')),
+                  const SizedBox(height: 16),
+                  const Text('IDENTITÉ CLIENT (FACTURES)', style: TextStyle(color: DzColors.lime, fontSize: 10,
+                      fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+                  const SizedBox(height: 8),
+                  TextField(controller: nomPass, textCapitalization: TextCapitalization.characters,
+                      decoration: const InputDecoration(labelText: 'Nom et prénom (latin, comme sur le passeport)')),
+                  const SizedBox(height: 12),
+                  Row(children: [
+                    Expanded(flex: 3, child: TextField(controller: adresse,
+                        decoration: const InputDecoration(labelText: 'Adresse en Algérie (latin)'))),
+                    const SizedBox(width: 12),
+                    Expanded(flex: 2, child: TextField(controller: wilaya,
+                        decoration: const InputDecoration(labelText: 'Wilaya'))),
+                  ]),
                   const SizedBox(height: 16),
                   Row(children: [
                     Expanded(child: TextField(controller: tel,

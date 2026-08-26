@@ -41,6 +41,19 @@ class Api {
       _send('PUT', path, body: body);
   static Future<dynamic> delete(String path) => _send('DELETE', path);
 
+  /// Téléchargement binaire (PDF…) — renvoie les octets.
+  static Future<List<int>> getBytes(String path) async {
+    final uri = Uri.parse('$baseUrl$path');
+    http.Response r;
+    try {
+      r = await http.get(uri, headers: {if (_token != null) 'Authorization': 'Bearer $_token'});
+    } catch (_) {
+      throw ApiException('API injoignable — vérifie que « docker compose up -d » tourne.');
+    }
+    if (r.statusCode >= 400) throw ApiException('Erreur ${r.statusCode} au téléchargement.');
+    return r.bodyBytes;
+  }
+
   static Future<dynamic> _send(String method, String path,
       {Map<String, dynamic>? body, bool auth = true}) async {
     final uri = Uri.parse('$baseUrl$path');

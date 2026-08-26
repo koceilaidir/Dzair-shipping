@@ -220,6 +220,68 @@ CREATE INDEX IF NOT EXISTS idx_affect_mission ON affectations(mission_id);
 CREATE INDEX IF NOT EXISTS idx_affect_ligne   ON affectations(ligne_id);
 CREATE INDEX IF NOT EXISTS idx_bons_chambre   ON bons(chambre_id);
 
+-- v9 — société(s) de facturation (factures des valises), prix déclaré par pièce.
+CREATE TABLE IF NOT EXISTS societes_facturation (
+  id          SERIAL PRIMARY KEY,
+  nom_cn      TEXT NOT NULL,
+  nom_en      TEXT NOT NULL DEFAULT '',
+  code_credit TEXT NOT NULL DEFAULT '',            -- 统一社会信用代码
+  adresse_cn  TEXT NOT NULL DEFAULT '',
+  adresse_en  TEXT NOT NULL DEFAULT '',
+  tel         TEXT NOT NULL DEFAULT '',
+  email       TEXT NOT NULL DEFAULT '',
+  devise      TEXT NOT NULL DEFAULT 'USD',
+  par_defaut  BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- Société initiale (depuis la licence 营业执照) — modifiable dans Réglages.
+INSERT INTO societes_facturation (nom_cn, nom_en, code_credit, adresse_cn, adresse_en, par_defaut)
+SELECT '广州觅涅伍贸易有限公司', 'GUANGZHOU MINIEWU TRADING CO., LTD.', '91440106MAK9J26C7Q',
+       '广州市天河区天河北路179号12层自编04房562号',
+       'Room 562, Self-numbered 04, 12/F, No.179 Tianhe North Road, Tianhe District, Guangzhou', TRUE
+WHERE NOT EXISTS (SELECT 1 FROM societes_facturation);
+-- Prix déclaré (USD / pièce) : sur l'affectation (ce qui part dans la valise) et
+-- mémorisé sur la ligne du bon (dernier prix connu, pré-rempli la fois suivante).
+ALTER TABLE affectations ADD COLUMN IF NOT EXISTS prix_declare NUMERIC(12,2);
+ALTER TABLE bon_lignes   ADD COLUMN IF NOT EXISTS prix_declare NUMERIC(12,2);
+-- Identité client sur les factures : nom latin (comme sur le passeport) + adresse en Algérie.
+ALTER TABLE voyageurs ADD COLUMN IF NOT EXISTS nom_passeport TEXT;   -- ex. BENALI YACINE
+ALTER TABLE voyageurs ADD COLUMN IF NOT EXISTS adresse       TEXT;   -- adresse en latin, Algérie
+ALTER TABLE voyageurs ADD COLUMN IF NOT EXISTS wilaya        TEXT;
+
+-- v10 — factures des valises (émises par la société de facturation, figées à la génération).
+CREATE TABLE IF NOT EXISTS factures (
+  id             SERIAL PRIMARY KEY,
+  mission_id     INTEGER NOT NULL REFERENCES missions(id) ON DELETE CASCADE,
+  societe_id     INTEGER REFERENCES societes_facturation(id),
+  numero         INTEGER NOT NULL,                        -- aléatoire 0-30 (demande Koceila)
+  date           DATE NOT NULL,
+  client_nom     TEXT NOT NULL DEFAULT '',
+  client_tel     TEXT NOT NULL DEFAULT '',
+  client_adresse TEXT NOT NULL DEFAULT '',
+  devise         TEXT NOT NULL DEFAULT 'USD',
+  taux_rmb       NUMERIC(10,4) NOT NULL DEFAULT 0,        -- RMB pour 1 USD
+  total          NUMERIC(14,2) NOT NULL DEFAULT 0,        -- USD
+  total_rmb      NUMERIC(14,2) NOT NULL DEFAULT 0,
+  lignes         JSONB NOT NULL DEFAULT '[]',             -- [{produit, quantite, prix, montant, affectation_id}]
+  societe        JSONB NOT NULL DEFAULT '{}',             -- copie figée de l'en-tête société
+  statut         TEXT NOT NULL DEFAULT 'emise' CHECK (statut IN ('emise','annulee')),
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_factures_mission ON factures(mission_id);
+
+-- v11 — retours de marchandise aux chambres (fin de séjour) : l'inventaire doit être
+-- vide avant le dernier retour ; chaque restitution est enregistrée, l'historique reste.
+CREATE TABLE IF NOT EXISTS retours (
+  id         SERIAL PRIMARY KEY,
+  ligne_id   INTEGER NOT NULL REFERENCES bon_lignes(id) ON DELETE CASCADE,
+  quantite   NUMERIC(10,2) NOT NULL,
+  date       DATE NOT NULL DEFAULT CURRENT_DATE,
+  user_id    INTEGER REFERENCES users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_retours_ligne ON retours(ligne_id);
+
 CREATE INDEX IF NOT EXISTS idx_missions_voyageur ON missions(voyageur_id);
 CREATE INDEX IF NOT EXISTS idx_missions_statut   ON missions(statut);
 CREATE INDEX IF NOT EXISTS idx_produits_mission  ON produits_mission(mission_id);

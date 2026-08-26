@@ -3,6 +3,7 @@ import '../services/api.dart';
 import '../theme.dart';
 import '../widgets/date_field.dart';
 import 'chambres_screen.dart' show showChambreForm;
+import '../services/download.dart';
 
 /// Fiche chambre en page (sidebar conservée sur PC) : infos, contacts Chine / Algérie,
 /// performances filtrables par année et par mois, historique des bons.
@@ -174,6 +175,7 @@ class _ChambreDetailScreenState extends State<ChambreDetailScreen> {
                 Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text('Bon du ${dateFr(b['date'])}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
                   Text('${_f(_n(b['pieces']))} pcs · ${_n(b['kg']).toStringAsFixed(1)} kg'
+                    '${_n(b['rendu']) > 0 ? ' · ${_f(_n(b['rendu']))} rendues' : ''}'
                       '${(b['note'] ?? '').toString().isNotEmpty ? ' · ${b['note']}' : ''}',
                       maxLines: 1, overflow: TextOverflow.ellipsis,
                       style: const TextStyle(color: DzColors.mut, fontSize: 11)),
@@ -351,7 +353,9 @@ class _ChambreDetailScreenState extends State<ChambreDetailScreen> {
                   child: Row(children: [
                     Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                       Text('${l['produit']}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                      Text('${_f(_n(l['quantite']))} pcs · ${_n(l['poids_total']).toStringAsFixed(1)} kg · '
+                      Text('${_f(_n(l['quantite']))} pcs'
+                          '${_n(l['rendu']) > 0 ? ' (−${_f(_n(l['rendu']))} rendues)' : ''}'
+                          ' · ${_n(l['poids_total']).toStringAsFixed(1)} kg · '
                           '${l['mode'] == 'kg' ? '${_f(_n(l['prix']))} DA/kg' : '${_f(_n(l['prix']))} DA/pc'} · '
                           'manque ${_f(_n(l['manque_rmb']))} ¥/pc · '
                           '${_f(_n(l['affecte']))} en valise',
@@ -363,6 +367,18 @@ class _ChambreDetailScreenState extends State<ChambreDetailScreen> {
                 ),
               const SizedBox(height: 10),
               Row(children: [
+                TextButton.icon(
+                  onPressed: () async {
+                    try {
+                      final bytes = await Api.getBytes('/inventaire/bons/$id/pdf');
+                      await saveFile('bon-${b['chambre_nom']}-$id.pdf', bytes);
+                    } catch (e) {
+                      if (ctx.mounted) ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text('$e')));
+                    }
+                  },
+                  icon: const Icon(Icons.picture_as_pdf_outlined, size: 16, color: DzColors.lime),
+                  label: const Text('PDF', style: TextStyle(color: DzColors.lime, fontSize: 12.5)),
+                ),
                 TextButton.icon(
                   onPressed: () async {
                     try {

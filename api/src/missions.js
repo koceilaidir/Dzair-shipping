@@ -75,19 +75,28 @@ async function sommesTranches(id) {
   };
 }
 
-// Douane à donner en avance : 5,5 % × dépôt carte × taux OFFICIEL — toujours sur le
-// dépôt RÉEL (on ne peut pas retirer plus que ce qu'il y a dans la carte).
-function douanePrevue(marchDevise, reglages) {
-  return Math.round(marchDevise * Number(reglages.taux_officiel) * 0.055);
+// Douane à donner en avance : 5,5 % × base × taux OFFICIEL. Base = total des prix
+// DÉCLARÉS des produits en valise (c'est ce que dira la facture) dès qu'il y en a,
+// sinon le dépôt carte (on ne peut pas retirer plus que ce qu'il y a dedans).
+function douanePrevue(baseDevise, reglages) {
+  return Math.round(baseDevise * Number(reglages.taux_officiel) * 0.055);
+}
+
+// Total déclaré (USD) d'une mission = Σ affectations qté × prix déclaré.
+async function declareDe(id) {
+  return Number((await q(
+    `SELECT COALESCE(SUM(quantite * COALESCE(prix_declare, 0)), 0) AS t FROM affectations WHERE mission_id = $1`,
+    [id])).rows[0].t);
 }
 
 async function majDouaneEstimee(id) {
   const m = (await q('SELECT statut FROM missions WHERE id = $1', [id])).rows[0];
   if (!m || m.statut === 'cloturee') return;
   const { marchDevise } = await sommesTranches(id);
+  const declare = await declareDe(id);
   const reglages = await getReglages();
   await q('UPDATE missions SET douane = $1 WHERE id = $2',
-    [douanePrevue(marchDevise, reglages), id]);
+    [douanePrevue(declare > 0 ? declare : marchDevise, reglages), id]);
 }
 
 const audit = (userId, action, entite, id, details) => q(
@@ -166,7 +175,7 @@ missionsRouter.get('/:id', async (req, res) => {
     'SELECT * FROM tranches_devises WHERE mission_id = $1 ORDER BY id', [id])).rows;
   // Produits venus de l'inventaire (avec chambre, poids/unité, gain calculés).
   const affectations = (await q(
-    `SELECT a.id, a.ligne_id, a.quantite, a.manquants,
+    `SELECT a.id, a.ligne_id, a.quantite, a.manquants, a.prix_declare,
             l.produit, l.mode, l.prix, l.manque_rmb,
             l.poids_total / l.quantite AS poids_unit,
             CASE WHEN l.mode = 'kg' THEN l.prix * l.poids_total / l.quantite ELSE l.prix END AS gain_piece,
@@ -182,7 +191,8 @@ missionsRouter.get('/:id', async (req, res) => {
     const marchDevise = tranches
       .filter((t) => t.motif !== 'poche')
       .reduce((s, t) => s + Number(t.usd), 0);
-    const d = douanePrevue(marchDevise, reglages);
+    const declare = affectations.reduce((s, a) => s + Number(a.quantite) * Number(a.prix_declare || 0), 0);
+    const d = douanePrevue(declare > 0 ? declare : marchDevise, reglages);
     if (d !== Number(m.douane)) {
       await q('UPDATE missions SET douane = $1 WHERE id = $2', [d, id]);
       m.douane = d;
@@ -339,7 +349,13 @@ missionsRouter.put('/:id', async (req, res) => {
   // Journal : quelle mission, et quoi (champs modifiés) — checklists résumées.
   const champs = Object.keys(parsed.data);
   const details = { code: cur.code };
-  if (parsed.data.valise_close !== undefined) details.valise = parsed.data.valise_close ? 'complète' : 'rouverte';
+  if (parsed.data.valise_close !== undefined) {
+    details.valise = parsed.data.valise_close ? 'complète' : 'rouverte';
+    // Valise rouverte → les factures émises ne correspondent plus : annulées, à regénérer.
+    if (parsed.data.valise_close === false) {
+      await q(`UPDATE factures SET statut = 'annulee' WHERE mission_id = $1 AND statut = 'emise'`, [id]);
+    }
+  }
   else if (champs.length === 1 && (champs[0] === 'check_depart' || champs[0] === 'check_retour')) {
     details.check = champs[0] === 'check_depart' ? 'départ' : 'retour';
   } else details.champs = champs;
@@ -467,6 +483,11 @@ missionsRouter.post('/:id/cloture', async (req, res) => {
 
   const { kg } = await valiseDe(id);
   const d = parsed.data;
+  // Total des factures par défaut = Σ prix déclarés de la valise (ce que disent les factures).
+  if (d.factures_total == null) {
+    const decl = await declareDe(id);
+    if (decl > 0) d.factures_total = Math.round(decl * 100) / 100;
+  }
 
   // Manques : coût = pièces × prix du manque (RMB) × taux RMB — une dépense de la mission.
   const reglagesM = await getReglages();
