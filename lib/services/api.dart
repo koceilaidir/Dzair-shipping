@@ -11,8 +11,13 @@ class ApiException implements Exception {
 
 /// Client HTTP de l'API Dzair Shipping.
 /// En dev : l'API tourne via `docker compose up -d` sur localhost:3000.
+/// En prod : l'URL est injectée au build —
+///   flutter build web --dart-define=API_URL=https://…/api
 class Api {
-  static const baseUrl = 'http://localhost:3000/api';
+  static const baseUrl = String.fromEnvironment(
+    'API_URL',
+    defaultValue: 'http://localhost:3000/api',
+  );
 
   static String? _token;
   static String? role; // 'admin' | 'voyageur' | 'client'

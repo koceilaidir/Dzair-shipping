@@ -1,0 +1,23 @@
+# Blueprint Render — héberge l'API Node (conteneur Docker existant).
+# Sur render.com : New → Blueprint → choisir ce dépôt ; Render lit ce fichier.
+# Les valeurs « sync: false » se saisissent à la main dans le dashboard Render
+# (jamais dans git) : DATABASE_URL (Supabase, Session pooler) et JWT_SECRET.
+services:
+  - type: web
+    name: dzair-shipping-api
+    runtime: docker
+    dockerfilePath: ./api/Dockerfile
+    dockerContext: ./api
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        sync: false          # postgresql://…pooler.supabase.com:5432/postgres (Session pooler)
+      - key: DATABASE_SSL
+        value: "1"
+      - key: JWT_SECRET
+        sync: false          # 64+ caractères aléatoires
+      - key: CORS_ORIGIN
+        value: "https://koceilaidir.github.io"   # ajouter ,https://TONDOMAINE quand le domaine est branché
+      - key: PORT
+        value: "3000"
