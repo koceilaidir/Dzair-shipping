@@ -32,7 +32,7 @@ const app = express();
 // ---------- Sécurité de base ----------
 app.use(helmet());
 app.use(cors({ origin: process.env.CORS_ORIGIN?.split(',') ?? true }));
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '10mb' })); // photos du bon des douaniers en base64
 app.use(rateLimit({ windowMs: 60 * 1000, max: 300 })); // garde-fou global
 
 // ---------- Routes ----------

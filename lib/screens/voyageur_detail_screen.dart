@@ -314,7 +314,7 @@ class _VoyageurDetailScreenState extends State<VoyageurDetailScreen> {
                   const SizedBox(height: 18),
                   TextField(controller: nom, decoration: const InputDecoration(labelText: 'Nom complet')),
                   const SizedBox(height: 16),
-                  const Text('IDENTITÉ CLIENT (FACTURES)', style: TextStyle(color: DzColors.lime, fontSize: 10,
+                  const Text('IDENTITÉ CLIENT (FACTURES)', style: TextStyle(color: DzColors.mut2, fontSize: 10,
                       fontWeight: FontWeight.w700, letterSpacing: 1.2)),
                   const SizedBox(height: 8),
                   TextField(controller: nomPass, textCapitalization: TextCapitalization.characters,

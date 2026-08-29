@@ -524,7 +524,7 @@ class _InventaireScreenState extends State<InventaireScreen> {
                 Text('${l['produit']}', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
                 Text('Traçabilité du lot', style: const TextStyle(color: DzColors.mut, fontSize: 11.5)),
                 const SizedBox(height: 14),
-                const Text('ORIGINE', style: TextStyle(color: DzColors.lime, fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+                const Text('ORIGINE', style: TextStyle(color: DzColors.mut2, fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 1.2)),
                 const SizedBox(height: 4),
                 ligne('Chambre', '${l['chambre_nom']}'),
                 ligne('Dépôt en Algérie', '${l['depot_wilaya'] ?? '—'}'
@@ -536,7 +536,7 @@ class _InventaireScreenState extends State<InventaireScreen> {
                 ligne('Gain par pièce', '${_f(_n(l['gain_piece']))} DA', c: DzColors.lime),
                 ligne('Prix du manque', '${_f(_n(l['manque_rmb']))} ¥/pc', c: DzColors.amber),
                 const SizedBox(height: 14),
-                const Text('OÙ SONT LES PIÈCES', style: TextStyle(color: DzColors.lime, fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+                const Text('OÙ SONT LES PIÈCES', style: TextStyle(color: DzColors.mut2, fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 1.2)),
                 const SizedBox(height: 4),
                 ligne('À l’hôtel (pas encore en valise)', '${_f(restant)} pc'),
                 if (_n(l['rendu']) > 0)

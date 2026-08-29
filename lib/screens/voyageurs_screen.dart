@@ -284,7 +284,7 @@ class _VoyageursScreenState extends State<VoyageursScreen> {
                       decoration: const InputDecoration(labelText: 'Membre depuis'))),
                 ]),
                 const SizedBox(height: 16),
-                const Text('IDENTITÉ CLIENT (FACTURES)', style: TextStyle(color: DzColors.lime, fontSize: 10,
+                const Text('IDENTITÉ CLIENT (FACTURES)', style: TextStyle(color: DzColors.mut2, fontSize: 10,
                     fontWeight: FontWeight.w700, letterSpacing: 1.2)),
                 const SizedBox(height: 8),
                 TextField(controller: nomPass, textCapitalization: TextCapitalization.characters,

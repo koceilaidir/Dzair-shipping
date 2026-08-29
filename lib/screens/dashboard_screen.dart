@@ -1,519 +1,450 @@
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../services/api.dart';
 import '../theme.dart';
+import 'mission_detail_screen.dart';
 
-/// Tableau de bord admin — fidèle à la maquette validée.
-/// NOTE : données de démonstration en dur pour l'instant ;
-/// elles seront branchées sur l'API avec le module Missions.
-class DashboardScreen extends StatelessWidget {
+/// Tableau de bord — charte v3 « iOS sombre », branché sur l'API réelle.
+/// KPIs (missions, net du mois, créances, stock exposé) · missions en cours ·
+/// seuil de collecte du séjour · alertes · activité récente.
+class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(builder: (context, c) {
-      final wide = c.maxWidth > 1000;
-      final main = _MainColumn(wide: wide);
-      if (!wide) {
-        return ListView(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-          children: [main, const SizedBox(height: 14), const _Rail()],
-        );
-      }
-      return SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(20, 14, 20, 24),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(child: main),
-            const SizedBox(width: 14),
-            const SizedBox(width: 300, child: _Rail()),
-          ],
-        ),
-      );
+  State<DashboardScreen> createState() => _DashboardScreenState();
+}
+
+class _DashboardScreenState extends State<DashboardScreen> {
+  List? _missions;
+  Map? _finance;
+  Map? _creances;
+  Map? _stock;
+  List? _activite;
+  List? _voyageurs;
+  bool _loaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  // Chaque source est indépendante : si une tombe, le reste du tableau vit.
+  Future<void> _load() async {
+    Future<T?> tente<T>(Future<dynamic> f) async {
+      try { return await f as T; } catch (_) { return null; }
+    }
+    final res = await Future.wait([
+      tente<List>(Api.get('/missions')),
+      tente<Map>(Api.get('/rapports/finance')),
+      tente<Map>(Api.get('/rapports/creances')),
+      tente<Map>(Api.get('/inventaire/stock')),
+      tente<List>(Api.get('/rapports/activite')),
+      tente<List>(Api.get('/voyageurs')),
+    ]);
+    if (!mounted) return;
+    setState(() {
+      _missions = res[0] as List?;
+      _finance = res[1] as Map?;
+      _creances = res[2] as Map?;
+      _stock = res[3] as Map?;
+      _activite = res[4] as List?;
+      _voyageurs = res[5] as List?;
+      _loaded = true;
     });
   }
-}
 
-/* ============================ COLONNE PRINCIPALE ============================ */
+  /* ---------- Calculs (mêmes formules que le serveur) ---------- */
+  double _n(dynamic v) => v == null ? 0 : (num.tryParse('$v') ?? 0).toDouble();
+  String _f(num n) => n.round().toString()
+      .replaceAllMapped(RegExp(r'(\d)(?=(\d{3})+$)'), (m) => '${m[1]} ');
 
-class _MainColumn extends StatelessWidget {
-  final bool wide;
-  const _MainColumn({required this.wide});
+  double _fraisDe(Map m) {
+    final poche = _n(m['poche_da']) > 0
+        ? _n(m['poche_da']) : _n(m['jours']) * _n(m['budget_jour']);
+    return _n(m['billet']) + _n(m['dem_cout']) + _n(m['frais_visa']) +
+        (poche - _n(m['reste_da'])).clamp(0, double.infinity) +
+        _n(m['douane']) + _n(m['taxes_carte']) + _n(m['autres']) +
+        _n(m['manques_da']) + _n(m['saisie_da']) +
+        (m['valise_sup'] == true ? _n(m['valise_sup_prix']) : 0);
+  }
 
+  double _benefDe(Map m) =>
+      (m['statut'] == 'cloturee' ? _n(m['attendu']) : _n(m['revenu'])) - _fraisDe(m);
+
+  List<Map> get _enCours => (_missions ?? [])
+      .cast<Map>().where((m) => m['statut'] != 'cloturee').toList();
+
+  String _dateFr(dynamic d) {
+    final s = '$d';
+    return s.length >= 10 ? '${s.substring(8, 10)}/${s.substring(5, 7)}' : '—';
+  }
+
+  int? _joursAvant(dynamic d) {
+    final dt = DateTime.tryParse('$d'.length >= 10 ? '$d'.substring(0, 10) : '');
+    if (dt == null) return null;
+    final now = DateTime.now();
+    return dt.difference(DateTime(now.year, now.month, now.day)).inDays;
+  }
+
+  static const _moisFr = ['', 'janvier', 'février', 'mars', 'avril', 'mai', 'juin',
+    'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+
+  /* ---------- KPIs ---------- */
+  (String, String, Color, String) get _kpiNet {
+    final pm = (_finance?['par_mois'] as List?) ?? [];
+    if (pm.isEmpty) return ('Net agence', '—', DzColors.txt, 'aucune clôture');
+    final last = pm.last as Map;
+    final mois = '${last['mois']}';
+    final nom = mois.length >= 7 ? _moisFr[int.tryParse(mois.substring(5, 7)) ?? 0] : mois;
+    final net = _n(last['net']);
+    return ('Net agence · $nom', '${_f(net)} DA',
+        net >= 0 ? DzColors.lime : DzColors.red, 'missions clôturées du mois');
+  }
+
+  (String, String) get _kpiStock {
+    final lignes = (_stock?['lignes'] as List?) ?? [];
+    double da = 0, kgHotel = 0, kgValise = 0;
+    for (final l in lignes.cast<Map>()) {
+      da += _n(l['gain_restant']) + _n(l['gain_en_cours']);
+      kgHotel += _n(l['kg_restant']);
+      kgValise += _n(l['kg_en_cours']);
+    }
+    return ('${_f(da)} DA',
+        '${kgHotel.toStringAsFixed(0)} kg à l’hôtel · ${kgValise.toStringAsFixed(0)} kg en valise');
+  }
+
+  /* ---------- Alertes ---------- */
+  List<(IconData, String, Color)> get _alertes {
+    final out = <(IconData, String, Color)>[];
+    // Marchandise encore à l'hôtel alors qu'un retour approche.
+    final lignes = (_stock?['lignes'] as List?) ?? [];
+    final kgHotel = lignes.cast<Map>().fold<double>(0, (s, l) => s + _n(l['kg_restant']));
+    final ouvertes = (_stock?['ouvertes'] as List?) ?? [];
+    if (kgHotel > 0.5 && ouvertes.isNotEmpty) {
+      int? min;
+      String qui = '';
+      for (final o in ouvertes.cast<Map>()) {
+        final j = _joursAvant(o['retour']);
+        if (j != null && (min == null || j < min)) { min = j; qui = '${o['voyageur']}'; }
+      }
+      if (min != null && min <= 7) {
+        out.add((Icons.warning_amber_rounded,
+            'Retour de $qui dans $min j — ${kgHotel.toStringAsFixed(1)} kg encore à l’hôtel',
+            min <= 2 ? DzColors.red : DzColors.amber));
+      }
+    }
+    // Documents voyageurs proches de la péremption.
+    for (final v in (_voyageurs ?? []).cast<Map>()) {
+      final jp = _joursAvant(v['passeport_expire']);
+      if (jp != null && jp < 8 * 30) {
+        out.add((Icons.badge_outlined,
+            'Passeport de ${v['nom']} expire dans ${(jp / 30).floor()} mois',
+            jp < 90 ? DzColors.red : DzColors.amber));
+      }
+      final ja = _joursAvant(v['autorisation_expire']);
+      if (ja != null && ja < 60) {
+        out.add((Icons.gavel_outlined,
+            'Autorisation ANAE de ${v['nom']} expire dans $ja j', DzColors.red));
+      }
+    }
+    // Créance la plus lourde.
+    final cm = (_creances?['missions'] as List?) ?? [];
+    Map? pire;
+    for (final m in cm.cast<Map>()) {
+      if (_n(m['reste']) > 0 && (pire == null || _n(m['reste']) > _n(pire['reste']))) pire = m;
+    }
+    if (pire != null) {
+      out.add((Icons.account_balance_wallet_outlined,
+          '${_f(_n(pire['reste']))} DA à encaisser — ${pire['code']} (${pire['voyageur']})',
+          DzColors.amber));
+    }
+    return out.take(4).toList();
+  }
+
+  /* ---------- Activité : phrase courte par action ---------- */
+  String _phrase(Map a) {
+    final d = (a['details'] as Map?) ?? {};
+    final code = d['code'] ?? d['chambre'] ?? '';
+    switch ('${a['action']}') {
+      case 'create': return a['entite'] == 'mission'
+          ? 'a créé la mission ${d['code'] ?? ''}' : 'a créé ${a['entite']} $code';
+      case 'cloture': return 'a clôturé ${d['code'] ?? 'une mission'}';
+      case 'valise_ajout': return 'a ajouté ${d['produit'] ?? 'un produit'}'
+          '${d['bagage_main'] == true ? ' au bagage à main' : ' à la valise'} ${d['code'] ?? ''}';
+      case 'valise_retrait': return 'a remis ${d['produit'] ?? 'un produit'} en stock';
+      case 'tranche': return 'a ajouté ${_f(_n(d['montant']))} ${d['devise'] ?? ''} (${d['motif'] ?? ''}) — ${d['code'] ?? ''}';
+      case 'encaissement': return 'a encaissé ${_f(_n(d['montant']))} DA'
+          '${d['depot'] != null ? ' — dépôt ${d['depot']}' : ''} (${d['code'] ?? ''})';
+      case 'arrivee': return 'a saisi l’arrivée de ${d['code'] ?? ''} — taxes ${_f(_n(d['taxes_da']))} DA';
+      case 'arrivee_photo': return 'a joint la photo du bon de douane — ${d['code'] ?? ''}';
+      case 'bon_ajout': return 'a complété un bon — chambre ${d['chambre'] ?? ''}';
+      case 'retour_chambre': return 'a rendu ${_f(_n(d['quantite']))} pc à la chambre ${d['chambre'] ?? ''}';
+      case 'depot_statut': return 'dépôt ${d['depot'] ?? ''} → ${d['statut'] ?? ''} (${d['code'] ?? ''})';
+      case 'update': return 'a modifié ${a['entite']} ${d['code'] ?? ''}';
+      default: return '${a['action']} ${a['entite']} $code';
+    }
+  }
+
+  String _quand(dynamic created) {
+    final dt = DateTime.tryParse('$created');
+    if (dt == null) return '';
+    final l = dt.toLocal();
+    final now = DateTime.now();
+    if (l.year == now.year && l.month == now.month && l.day == now.day) {
+      return '${l.hour.toString().padLeft(2, '0')}:${l.minute.toString().padLeft(2, '0')}';
+    }
+    return '${l.day.toString().padLeft(2, '0')}/${l.month.toString().padLeft(2, '0')}';
+  }
+
+  /* ================================ UI ================================ */
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Text('Salut ${Api.nom ?? ''} 👋',
-            style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w800)),
-        const Text('Août 2026 · vue d’ensemble',
-            style: TextStyle(color: DzColors.mut, fontSize: 12)),
-        const SizedBox(height: 14),
-        GridView.count(
-          crossAxisCount: wide ? 4 : 2,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          mainAxisSpacing: 10,
-          crossAxisSpacing: 10,
-          childAspectRatio: wide ? 1.9 : 1.55,
-          children: const [
-            _Kpi(label: 'Net agence (mois)', value: '+1 295 500', unit: 'DA',
-                color: DzColors.lime, sub: '▲ 12% vs juillet'),
-            _Kpi(label: 'DA encaissés', value: '7 340 000', unit: 'DA',
-                sub: 'sortis : 6 044 500'),
-            _Kpi(label: 'Créances dehors', value: '224 500', unit: 'DA',
-                color: DzColors.amber, sub: '3 dépôts · 1 à relancer'),
-            _Kpi(label: 'Missions du mois', value: '14 / 20', unit: '',
-                sub: '6 créneaux libres'),
+    if (!_loaded) {
+      return const Center(child: CircularProgressIndicator(color: DzColors.lime));
+    }
+    return RefreshIndicator(
+      color: DzColors.lime,
+      onRefresh: _load,
+      child: LayoutBuilder(builder: (context, c) {
+        final wide = c.maxWidth > 1000;
+        final gauche = _colGauche();
+        final droite = _colDroite();
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(22, 14, 22, 28),
+          children: [
+            const Text('Tableau de bord',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, letterSpacing: -.4)),
+            const Text('Vue d’ensemble — missions, stock, argent.',
+                style: TextStyle(color: DzColors.mut, fontSize: 12.5)),
+            const SizedBox(height: 16),
+            _kpis(wide),
+            const SizedBox(height: 16),
+            if (wide)
+              Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Expanded(flex: 7, child: gauche),
+                const SizedBox(width: 16),
+                Expanded(flex: 5, child: droite),
+              ])
+            else ...[gauche, const SizedBox(height: 16), droite],
           ],
-        ),
-        const SizedBox(height: 12),
-        if (wide)
-          const Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Expanded(flex: 13, child: _CardMarchandise()),
-            SizedBox(width: 12),
-            Expanded(flex: 10, child: _CardBenefice()),
-          ])
-        else ...[
-          const _CardMarchandise(),
-          const SizedBox(height: 12),
-          const _CardBenefice(),
+        );
+      }),
+    );
+  }
+
+  Widget _kpis(bool wide) {
+    final (netLab, netVal, netCol, netSub) = _kpiNet;
+    final (stockVal, stockSub) = _kpiStock;
+    final cr = _n(_creances?['total_a_recuperer']);
+    final crN = ((_creances?['missions'] as List?) ?? [])
+        .cast<Map>().where((m) => _n(m['reste']) > 0).length;
+    final cards = [
+      _kpi('Missions en cours', '${_enCours.length}',
+          sub: _missions == null ? 'hors ligne' : 'sur ${(_missions ?? []).length} au total'),
+      _kpi(netLab, netVal, color: netCol, sub: netSub),
+      _kpi('Créances dehors', cr > 0 ? '${_f(cr)} DA' : 'Soldé ✓',
+          color: cr > 0 ? DzColors.amber : DzColors.lime,
+          sub: cr > 0 ? '$crN mission(s) à encaisser' : 'tout est encaissé'),
+      _kpi('Stock exposé', stockVal, sub: stockSub),
+    ];
+    if (wide) {
+      return Row(children: [
+        for (var i = 0; i < cards.length; i++) ...[
+          if (i > 0) const SizedBox(width: 12),
+          Expanded(child: cards[i]),
         ],
-        const SizedBox(height: 12),
-        const _CardMissions(),
-      ],
-    );
-  }
-}
-
-class _Kpi extends StatelessWidget {
-  final String label, value, unit, sub;
-  final Color color;
-  const _Kpi({required this.label, required this.value, required this.unit,
-      required this.sub, this.color = DzColors.txt});
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(label.toUpperCase(),
-              style: const TextStyle(color: DzColors.mut, fontSize: 9,
-                  fontWeight: FontWeight.w600, letterSpacing: 1.1)),
-          const Spacer(),
-          FittedBox(
-            child: Text('$value ${unit.isNotEmpty ? unit : ''}',
-                style: TextStyle(color: color, fontSize: 20, fontWeight: FontWeight.w800)),
-          ),
-          Text(sub, style: const TextStyle(color: DzColors.mut, fontSize: 10)),
-        ]),
-      ),
-    );
-  }
-}
-
-/* ---------- Donut marchandise ---------- */
-
-class _CardMarchandise extends StatelessWidget {
-  const _CardMarchandise();
-
-  static const cats = [
-    ('Électronique', 2964000, Color(0xFF3987E5)),
-    ('Montres', 1546000, Color(0xFFD95926)),
-    ('Accessoires', 1160000, Color(0xFF199E70)),
-    ('Autres', 773000, Color(0xFFC98500)),
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Row(children: [
-            Text('Marchandise du mois',
-                style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
-            Spacer(),
-            Text('par catégorie', style: TextStyle(color: DzColors.mut, fontSize: 10.5)),
-          ]),
-          const SizedBox(height: 14),
-          Row(children: [
-            SizedBox(
-              width: 120, height: 120,
-              child: Stack(alignment: Alignment.center, children: [
-                CustomPaint(size: const Size.square(120), painter: _DonutPainter()),
-                const Column(mainAxisSize: MainAxisSize.min, children: [
-                  Text('412 kg', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
-                  Text('14 valises', style: TextStyle(color: DzColors.mut, fontSize: 9.5)),
-                ]),
-              ]),
-            ),
-            const SizedBox(width: 18),
-            Expanded(
-              child: Wrap(spacing: 16, runSpacing: 9, children: [
-                for (final (nom, val, col) in cats)
-                  SizedBox(
-                    width: 118,
-                    child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Container(width: 8, height: 8,
-                          margin: const EdgeInsets.only(top: 4),
-                          decoration: BoxDecoration(color: col,
-                              borderRadius: BorderRadius.circular(3))),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                          Text(nom, style: const TextStyle(color: DzColors.mut, fontSize: 10.5)),
-                          Text('${_fmt(val)} DA',
-                              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
-                        ]),
-                      ),
-                    ]),
-                  ),
-              ]),
-            ),
-          ]),
-        ]),
-      ),
-    );
-  }
-}
-
-class _DonutPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final total = _CardMarchandise.cats.fold<num>(0, (s, c) => s + c.$2);
-    final rect = Offset.zero & size;
-    final stroke = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 17
-      ..strokeCap = StrokeCap.butt;
-    double start = -math.pi / 2;
-    for (final (_, val, col) in _CardMarchandise.cats) {
-      final sweep = val / total * 2 * math.pi - .04;
-      canvas.drawArc(rect.deflate(9), start, sweep, false, stroke..color = col);
-      start += sweep + .04;
+      ]);
     }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter old) => false;
-}
-
-/* ---------- Courbe bénéfice ---------- */
-
-class _CardBenefice extends StatelessWidget {
-  const _CardBenefice();
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Row(children: [
-            Text('Bénéfice cumulé',
-                style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
-            Spacer(),
-            Text('août', style: TextStyle(color: DzColors.mut, fontSize: 10.5)),
-          ]),
-          const SizedBox(height: 8),
-          const Text('+1 295 500 DA',
-              style: TextStyle(color: DzColors.lime, fontSize: 19, fontWeight: FontWeight.w800)),
-          const SizedBox(height: 8),
-          SizedBox(height: 84, width: double.infinity,
-              child: CustomPaint(painter: _AreaPainter())),
-        ]),
-      ),
-    );
-  }
-}
-
-class _AreaPainter extends CustomPainter {
-  static const pts = [.06, .12, .18, .15, .30, .38, .34, .52, .60, .72, .80, .86];
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final grid = Paint()..color = const Color(0xFF2C2C31)..strokeWidth = 1;
-    for (final f in [.25, .55, .85]) {
-      canvas.drawLine(Offset(0, size.height * f), Offset(size.width, size.height * f), grid);
-    }
-    final path = Path();
-    for (var i = 0; i < pts.length; i++) {
-      final x = size.width * i / (pts.length - 1);
-      final y = size.height * (1 - pts[i] * .92) - 2;
-      i == 0 ? path.moveTo(x, y) : path.lineTo(x, y);
-    }
-    final fill = Path.from(path)
-      ..lineTo(size.width, size.height)
-      ..lineTo(0, size.height)
-      ..close();
-    canvas.drawPath(
-      fill,
-      Paint()
-        ..shader = LinearGradient(
-          begin: Alignment.topCenter, end: Alignment.bottomCenter,
-          colors: [DzColors.lime.withValues(alpha: .25), DzColors.lime.withValues(alpha: 0)],
-        ).createShader(Offset.zero & size),
-    );
-    canvas.drawPath(path, Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.2
-      ..strokeJoin = StrokeJoin.round
-      ..color = DzColors.lime);
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter old) => false;
-}
-
-/* ---------- Missions récentes ---------- */
-
-class _CardMissions extends StatelessWidget {
-  const _CardMissions();
-
-  static const rows = [
-    ('MSN-014', 'Yacine B.', '44,2', '+243 700', DzColors.lime, '✈ En vol', DzColors.lime),
-    ('MSN-013', 'Samir K.', '45,8', '+228 400', DzColors.lime, '✓ Clôturée', DzColors.mut),
-    ('MSN-012', 'Rédha M.', '42,0', '+176 900', DzColors.lime, '◫ Créance', DzColors.amber),
-    ('MSN-011', 'Amine T.', '46,0', '−12 300', DzColors.red, '✕ Invendus', DzColors.red),
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          const Row(children: [
-            Text('Missions récentes',
-                style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
-            Spacer(),
-            Text('voir tout →', style: TextStyle(color: DzColors.mut, fontSize: 10.5)),
-          ]),
-          const SizedBox(height: 6),
-          for (final (code, nom, kg, benef, bCol, statut, sCol) in rows)
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 9),
-              decoration: const BoxDecoration(
-                  border: Border(bottom: BorderSide(color: DzColors.line))),
-              child: Row(children: [
-                SizedBox(width: 74,
-                    child: Text(code, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600))),
-                Expanded(child: Text(nom, style: const TextStyle(fontSize: 12.5))),
-                SizedBox(width: 52,
-                    child: Text('$kg kg',
-                        style: const TextStyle(color: DzColors.mut, fontSize: 11.5))),
-                SizedBox(width: 76,
-                    child: Text(benef, textAlign: TextAlign.right,
-                        style: TextStyle(color: bCol, fontSize: 12, fontWeight: FontWeight.w700))),
-                const SizedBox(width: 12),
-                _Pill(text: statut, color: sCol),
-              ]),
-            ),
-        ]),
-      ),
-    );
-  }
-}
-
-class _Pill extends StatelessWidget {
-  final String text;
-  final Color color;
-  const _Pill({required this.text, required this.color});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
-      decoration: BoxDecoration(
-          color: color.withValues(alpha: .13), borderRadius: BorderRadius.circular(99)),
-      child: Text(text,
-          style: TextStyle(color: color, fontSize: 9.5, fontWeight: FontWeight.w700)),
-    );
-  }
-}
-
-/* ============================ RAIL DROIT ============================ */
-
-class _Rail extends StatelessWidget {
-  const _Rail();
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      const _RailTitle('Vols en cours'),
-      const _VolCard(nom: 'AH 4022 · Yacine', route: 'CAN → ALG', progress: .72,
-          gauche: 'Décollé 12:10', droite: 'Atterrissage 18:40'),
-      const _VolCard(nom: 'MSN-015 · Samir', route: 'préparation', progress: 0,
-          gauche: 'Départ 15 août · 09:35', droite: 'valise 38,6 / 46 kg'),
-      const SizedBox(height: 14),
-      const _RailTitle('Notifications'),
-      const _Notif(ic: '◫', color: DzColors.red,
-          txt: 'Créance dépôt El Hamiz — 84 500 DA à J+7, relancer.', quand: 'il y a 2 h'),
-      const _Notif(ic: '🛂', color: DzColors.amber,
-          txt: 'Visa de Samir expire dans 21 jours.', quand: 'ce matin'),
-      const _Notif(ic: '⚖', color: DzColors.amber,
-          txt: 'MSN-014 à 91 % du plafond légal.', quand: 'hier'),
-      const _Notif(ic: '✓', color: DzColors.lime,
-          txt: 'Paiement reçu : 200 000 DA (MSN-013).', quand: 'hier'),
-      const SizedBox(height: 14),
-      const _RailTitle('Agenda'),
-      const _Agenda(j: '15', s: 'VEN', t: 'Départ Samir — AH 4020',
-          d: 'douane à préparer : 78 400 DA'),
-      const _Agenda(j: '16', s: 'SAM', t: 'Retour Yacine + taxi dépôts',
-          d: 'règlement de mission à faire'),
-      const _Agenda(j: '19', s: 'MAR', t: 'Départ Amine — Istanbul',
-          d: '2ᵉ mission du mois (2/2)'),
-      const _Agenda(j: '30', s: 'MER', t: 'Autorisation Rédha expire',
-          d: 'renouvellement 5 000 DA'),
+    return Column(children: [
+      Row(children: [Expanded(child: cards[0]), const SizedBox(width: 12), Expanded(child: cards[1])]),
+      const SizedBox(height: 12),
+      Row(children: [Expanded(child: cards[2]), const SizedBox(width: 12), Expanded(child: cards[3])]),
     ]);
   }
-}
 
-class _RailTitle extends StatelessWidget {
-  final String t;
-  const _RailTitle(this.t);
-  @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: Text(t, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
-      );
-}
-
-class _VolCard extends StatelessWidget {
-  final String nom, route, gauche, droite;
-  final double progress;
-  const _VolCard({required this.nom, required this.route, required this.progress,
-      required this.gauche, required this.droite});
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 9),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Row(children: [
-            Text(nom, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600)),
-            const Spacer(),
-            Text(route, style: const TextStyle(color: DzColors.mut, fontSize: 10.5)),
-          ]),
+  Widget _kpi(String label, String val, {Color color = DzColors.txt, String? sub}) =>
+      Container(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+        decoration: BoxDecoration(
+            color: DzColors.card, borderRadius: BorderRadius.circular(16)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(label.toUpperCase(),
+              style: const TextStyle(color: DzColors.mut, fontSize: 10,
+                  fontWeight: FontWeight.w700, letterSpacing: .8)),
           const SizedBox(height: 7),
-          SizedBox(
-            height: 24,
-            child: LayoutBuilder(builder: (context, c) {
-              const lineY = 12.0; // centre vertical de la piste
-              const planeSize = 18.0;
-              return Stack(children: [
-                Positioned(top: lineY - 1, left: 0, right: 0,
-                    child: CustomPaint(size: Size(c.maxWidth, 2), painter: _DashPainter())),
-                Positioned(top: lineY - 1, left: 0,
-                    child: Container(width: c.maxWidth * progress, height: 2, color: DzColors.lime)),
-                Positioned(
-                  left: (c.maxWidth * progress - planeSize / 2)
-                      .clamp(0, c.maxWidth - planeSize),
-                  top: lineY - planeSize / 2, // l'avion est centré SUR la ligne
-                  child: Transform.rotate(
-                    angle: math.pi / 2,
-                    child: Icon(Icons.flight, size: planeSize,
-                        color: progress > 0 ? DzColors.lime : DzColors.mut),
-                  ),
-                ),
-              ]);
-            }),
-          ),
-          const SizedBox(height: 3),
-          Row(children: [
-            Text(gauche, style: const TextStyle(color: DzColors.mut, fontSize: 9.5)),
-            const Spacer(),
-            Text(droite,
-                style: const TextStyle(color: DzColors.lime, fontSize: 9.5,
-                    fontWeight: FontWeight.w700)),
+          Text(val, maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: color, fontSize: 19, fontWeight: FontWeight.w800)),
+          if (sub != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: Text(sub, maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: DzColors.mut, fontSize: 10.5)),
+            ),
+        ]),
+      );
+
+  /* ---------- Colonne gauche : missions en cours + seuil ---------- */
+  Widget _colGauche() {
+    final seuil = _stock?['seuil'] as Map?;
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      _lab('Missions en cours'),
+      _group(_enCours.isEmpty
+          ? const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('Aucune mission en cours — crée-en une depuis Missions.',
+                  style: TextStyle(color: DzColors.mut, fontSize: 12.5)))
+          : Column(children: [
+              for (var i = 0; i < _enCours.length && i < 5; i++)
+                _missionRow(_enCours[i], first: i == 0),
+            ])),
+      if (seuil != null && _n(seuil['kg_libre']) > 0) ...[
+        const SizedBox(height: 16),
+        _lab('Seuil de collecte du séjour'),
+        _group(Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(children: [
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text.rich(TextSpan(children: [
+                  TextSpan(text: _f(_n(seuil['seuil_kg'])),
+                      style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+                  const TextSpan(text: '  DA/kg minimum',
+                      style: TextStyle(color: DzColors.mut, fontSize: 12, fontWeight: FontWeight.w600)),
+                ])),
+                const SizedBox(height: 3),
+                Text('${_f(_n(seuil['a_couvrir']))} DA à couvrir · '
+                    '${_n(seuil['kg_libre']).toStringAsFixed(0)} kg libres · '
+                    '${seuil['voyageurs']} voyageur(s) en collecte',
+                    style: const TextStyle(color: DzColors.mut, fontSize: 11)),
+              ]),
+            ),
           ]),
+        )),
+      ],
+    ]);
+  }
+
+  Widget _missionRow(Map m, {bool first = false}) {
+    final b = _benefDe(m);
+    final pret = _n(m['kg_total']) > 0 && b >= _n(m['objectif']);
+    final (lab, col) = m['statut'] == 'planifiee' || _n(m['kg_total']) == 0
+        ? ('Préparation', DzColors.amber)
+        : pret ? ('Prêt', DzColors.lime) : ('En cours', DzColors.amber);
+    return InkWell(
+      onTap: () => Navigator.push(context,
+              MaterialPageRoute(builder: (_) => MissionDetailScreen(id: m['id'] as int)))
+          .then((_) => _load()),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+        decoration: first ? null : const BoxDecoration(
+            border: Border(top: BorderSide(color: DzColors.line))),
+        child: Row(children: [
+          Container(
+            width: 32, height: 32, alignment: Alignment.center,
+            decoration: const BoxDecoration(color: DzColors.card2, shape: BoxShape.circle),
+            child: Text('${m['voyageur_nom'] ?? '?'}'.characters.first.toUpperCase(),
+                style: const TextStyle(color: DzColors.txt2, fontSize: 12, fontWeight: FontWeight.w700)),
+          ),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('${m['code']} · ${m['voyageur_nom']}',
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              Text(
+                  '${'${m['vol'] ?? ''}'.isNotEmpty ? '${m['vol']} · ' : ''}'
+                  'retour ${_dateFr(m['retour'])} · '
+                  '${_n(m['kg_total']).toStringAsFixed(1)} kg · '
+                  '${b >= 0 ? 'bénéf ${_f(b)} DA' : 'manque ${_f(-b)} DA'}',
+                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: DzColors.mut, fontSize: 11)),
+            ]),
+          ),
+          _pastille(lab, col),
         ]),
       ),
     );
   }
-}
 
-class _DashPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final p = Paint()..color = const Color(0xFF3A3A41)..strokeWidth = 2;
-    double x = 0;
-    while (x < size.width) {
-      canvas.drawLine(Offset(x, 1), Offset(math.min(x + 5, size.width), 1), p);
-      x += 10;
-    }
+  /* ---------- Colonne droite : alertes + activité ---------- */
+  Widget _colDroite() {
+    final alertes = _alertes;
+    final acts = (_activite ?? []).take(7).toList();
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      _lab('Alertes'),
+      _group(alertes.isEmpty
+          ? const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('Rien à signaler ✓',
+                  style: TextStyle(color: DzColors.mut, fontSize: 12.5)))
+          : Column(children: [
+              for (var i = 0; i < alertes.length; i++)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+                  decoration: i == 0 ? null : const BoxDecoration(
+                      border: Border(top: BorderSide(color: DzColors.line))),
+                  child: Row(children: [
+                    Icon(alertes[i].$1, size: 16, color: alertes[i].$3),
+                    const SizedBox(width: 11),
+                    Expanded(child: Text(alertes[i].$2,
+                        style: const TextStyle(color: DzColors.txt2, fontSize: 12))),
+                  ]),
+                ),
+            ])),
+      const SizedBox(height: 16),
+      _lab('Activité récente'),
+      _group(acts.isEmpty
+          ? const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('Aucune activité pour l’instant.',
+                  style: TextStyle(color: DzColors.mut, fontSize: 12.5)))
+          : Column(children: [
+              for (var i = 0; i < acts.length; i++)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  decoration: i == 0 ? null : const BoxDecoration(
+                      border: Border(top: BorderSide(color: DzColors.line))),
+                  child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Expanded(
+                      child: Text.rich(TextSpan(children: [
+                        TextSpan(text: '${(acts[i] as Map)['auteur'] ?? 'Admin'} ',
+                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+                        TextSpan(text: _phrase(acts[i] as Map),
+                            style: const TextStyle(color: DzColors.txt2, fontSize: 12)),
+                      ]), maxLines: 2, overflow: TextOverflow.ellipsis),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(_quand((acts[i] as Map)['created_at']),
+                        style: const TextStyle(color: DzColors.mut2, fontSize: 10.5)),
+                  ]),
+                ),
+            ])),
+    ]);
   }
 
-  @override
-  bool shouldRepaint(covariant CustomPainter old) => false;
+  /* ---------- Briques v3 ---------- */
+  Widget _lab(String t) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 7),
+        child: Text(t.toUpperCase(),
+            style: const TextStyle(color: DzColors.mut, fontSize: 11,
+                fontWeight: FontWeight.w700, letterSpacing: .8)),
+      );
+
+  Widget _group(Widget child) => Container(
+        decoration: BoxDecoration(
+            color: DzColors.card, borderRadius: BorderRadius.circular(16)),
+        clipBehavior: Clip.antiAlias,
+        child: child,
+      );
+
+  Widget _pastille(String t, Color c) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 4),
+        decoration: BoxDecoration(
+            color: DzColors.card2, borderRadius: BorderRadius.circular(99)),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Container(width: 6, height: 6,
+              decoration: BoxDecoration(color: c, shape: BoxShape.circle)),
+          const SizedBox(width: 6),
+          Text(t, style: TextStyle(color: c, fontSize: 10.5, fontWeight: FontWeight.w700)),
+        ]),
+      );
 }
-
-class _Notif extends StatelessWidget {
-  final String ic, txt, quand;
-  final Color color;
-  const _Notif({required this.ic, required this.color, required this.txt, required this.quand});
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 9),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Container(
-          width: 27, height: 27, alignment: Alignment.center,
-          decoration: BoxDecoration(color: color.withValues(alpha: .13),
-              borderRadius: BorderRadius.circular(8)),
-          child: Text(ic, style: const TextStyle(fontSize: 12)),
-        ),
-        const SizedBox(width: 9),
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(txt, style: const TextStyle(fontSize: 11.5, height: 1.35)),
-            Text(quand, style: const TextStyle(color: DzColors.mut, fontSize: 9.5)),
-          ]),
-        ),
-      ]),
-    );
-  }
-}
-
-class _Agenda extends StatelessWidget {
-  final String j, s, t, d;
-  const _Agenda({required this.j, required this.s, required this.t, required this.d});
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 9),
-      child: Row(children: [
-        Container(
-          width: 36,
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          decoration: BoxDecoration(color: DzColors.card2,
-              border: Border.all(color: DzColors.line),
-              borderRadius: BorderRadius.circular(8)),
-          child: Column(children: [
-            Text(s, style: const TextStyle(color: DzColors.mut, fontSize: 7.5,
-                fontWeight: FontWeight.w600)),
-            Text(j, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800)),
-          ]),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(t, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600)),
-            Text(d, style: const TextStyle(color: DzColors.mut, fontSize: 10)),
-          ]),
-        ),
-      ]),
-    );
-  }
-}
-
-String _fmt(num n) => n.toStringAsFixed(0).replaceAllMapped(
-    RegExp(r'(\d)(?=(\d{3})+$)'), (m) => '${m[1]} ');

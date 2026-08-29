@@ -4,6 +4,7 @@ import '../theme.dart';
 import '../widgets/dzair_logo.dart';
 import 'activite_screen.dart';
 import 'chambres_screen.dart';
+import 'creances_screen.dart';
 import 'dashboard_screen.dart';
 import 'finance_screen.dart';
 import 'inventaire_screen.dart';
@@ -41,6 +42,7 @@ class _ShellState extends State<Shell> {
         2 => const VoyageursScreen(),
         3 => const InventaireScreen(),
         4 => const ChambresScreen(),
+        5 => const CreancesScreen(),
         6 => const FinanceScreen(),
         7 => const ActiviteScreen(),
         8 => const ReglagesScreen(),
@@ -151,12 +153,15 @@ class _SideNav extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.only(left: 6, bottom: 18),
           child: Row(children: [
-            CircleAvatar(
-              radius: 17,
-              backgroundColor: DzColors.lime,
+            Container(
+              width: 34, height: 34, alignment: Alignment.center,
+              decoration: const BoxDecoration(
+                color: DzColors.card2,
+                shape: BoxShape.circle,
+              ),
               child: Text((Api.nom ?? 'A').characters.first.toUpperCase(),
                   style: const TextStyle(
-                      color: DzColors.inkOnLime, fontWeight: FontWeight.w800)),
+                      color: DzColors.lime, fontWeight: FontWeight.w800, fontSize: 14)),
             ),
             const SizedBox(width: 10),
             Expanded(
@@ -199,27 +204,28 @@ class _SideNav extends StatelessWidget {
             ),
           ]),
         ),
-        // Navigation
+        // Navigation — charte v3 « iOS sombre » : l'item actif est un groupe
+        // arrondi #1C1C1E avec icône lime et texte blanc, sans bordure.
         for (var i = 0; i < items.length; i++)
           Padding(
-            padding: const EdgeInsets.only(bottom: 4),
+            padding: const EdgeInsets.only(bottom: 3),
             child: Material(
-              color: i == tab ? DzColors.lime : Colors.transparent,
-              borderRadius: BorderRadius.circular(10),
+              color: i == tab ? DzColors.card : Colors.transparent,
+              borderRadius: BorderRadius.circular(12),
               child: InkWell(
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: BorderRadius.circular(12),
                 onTap: () => onTap(i),
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
                   child: Row(children: [
                     Icon(items[i].$1, size: 17,
-                        color: i == tab ? DzColors.inkOnLime : DzColors.mut),
+                        color: i == tab ? DzColors.lime : DzColors.mut),
                     const SizedBox(width: 10),
                     Text(items[i].$2,
                         style: TextStyle(
-                          fontSize: 12.5,
-                          fontWeight: i == tab ? FontWeight.w700 : FontWeight.w500,
-                          color: i == tab ? DzColors.inkOnLime : DzColors.mut,
+                          fontSize: 13,
+                          fontWeight: i == tab ? FontWeight.w600 : FontWeight.w500,
+                          color: i == tab ? DzColors.txt : DzColors.mut,
                         )),
                   ]),
                 ),

@@ -12,6 +12,7 @@ export const REGLAGES_DEFAUT = {
   frais_depot_visa: 6800,      // frais de dépôt du visa (DA)
   budget_jour_defaut: 3000,    // argent de poche par jour (DA)
   taux_officiel: 135,          // DA / USD — pour la douane à l'arrivée
+  ifu_marge_30: 1,             // 1 = la douane ajoute sa marge de 30 % avant l'IFU (ajustable à la clôture)
   taux_parallele_usd: 250,     // DA / USD au marché parallèle — coût réel des taxes de carte
   taux_parallele_eur: 270,     // DA / EUR au marché parallèle
   taux_rmb: 35,                // DA / RMB — pour valoriser les manques (pièces perdues)

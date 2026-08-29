@@ -19,6 +19,22 @@ Future<bool> showFacturesDialog(BuildContext context, {
   bool saving = false;
   bool ok = false;
 
+  // Taux USD → RMB pré-rempli avec le cours OFFICIEL du jour (cache serveur 12 h) —
+  // modifiable à la main. Repli hors ligne : taux_officiel ÷ taux_rmb des réglages.
+  try {
+    final d = await Api.get('/reglages/taux-usd') as Map;
+    final cny = (num.tryParse('${d['cny']}') ?? 0).toDouble();
+    if (cny > 0) taux.text = cny.toStringAsFixed(2);
+  } catch (_) {
+    try {
+      final r = await Api.get('/reglages') as Map;
+      final off = (num.tryParse('${r['taux_officiel']}') ?? 0).toDouble();
+      final rmb = (num.tryParse('${r['taux_rmb']}') ?? 0).toDouble();
+      if (off > 0 && rmb > 0) taux.text = (off / rmb).toStringAsFixed(2);
+    } catch (_) {}
+  }
+  if (!context.mounted) return false;
+
   double n(dynamic v) => v == null ? 0 : (num.tryParse('$v') ?? 0).toDouble();
   String f2(num v) => v.toStringAsFixed(2);
   final dep = depart == null ? null : DateTime.tryParse(depart);
@@ -157,7 +173,7 @@ Future<bool> showFacturesDialog(BuildContext context, {
                       padding: const EdgeInsets.only(bottom: 6, top: 4),
                       child: Row(children: [
                         Text(groupes.isEmpty ? 'PRODUITS DE LA VALISE' : 'RESTE À FACTURER',
-                            style: const TextStyle(color: DzColors.lime, fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+                            style: const TextStyle(color: DzColors.mut2, fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 1.2)),
                         const Spacer(),
                         TextButton(
                           onPressed: () => setSt(() => selection.addAll(restants.map((a) => a['id'] as int))),

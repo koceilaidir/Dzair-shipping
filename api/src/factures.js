@@ -91,10 +91,12 @@ facturesRouter.post('/generer', async (req, res) => {
     'SELECT * FROM societes_facturation ORDER BY par_defaut DESC, id LIMIT 1')).rows[0];
   if (!soc) return res.status(409).json({ error: 'Renseigne d’abord la société de facturation (Réglages).' });
 
-  // Affectations de la mission (avec prix déclaré) — chaque groupe doit en prendre.
+  // Affectations SOUTE de la mission (avec prix déclaré) — le bagage à main n'est
+  // JAMAIS facturé ni déclaré ; chaque groupe doit en prendre.
   const aff = (await q(
     `SELECT a.id, a.quantite, a.prix_declare, l.produit
-     FROM affectations a JOIN bon_lignes l ON l.id = a.ligne_id WHERE a.mission_id = $1`, [d.mission_id])).rows;
+     FROM affectations a JOIN bon_lignes l ON l.id = a.ligne_id
+     WHERE a.mission_id = $1 AND a.emplacement = 'soute'`, [d.mission_id])).rows;
   const byId = new Map(aff.map((a) => [a.id, a]));
   const deja = new Set((await q(
     `SELECT jsonb_array_elements(lignes)->>'affectation_id' AS aid FROM factures

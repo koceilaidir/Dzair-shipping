@@ -282,6 +282,69 @@ CREATE TABLE IF NOT EXISTS retours (
 );
 CREATE INDEX IF NOT EXISTS idx_retours_ligne ON retours(ligne_id);
 
+-- v12 — taxes d'arrivée séparées : douane 5 % + IFU 0,5 %. La douane ajoute PARFOIS
+-- une marge de 30 % au CA avant l'IFU : le choix appliqué se fige sur la mission à
+-- la clôture (NULL = suivre le réglage ifu_marge_30 tant que la mission est ouverte).
+ALTER TABLE missions ADD COLUMN IF NOT EXISTS ifu_marge BOOLEAN;
+
+-- v13 — bagages supplémentaires & douane à l'arrivée.
+-- 3e valise achetée à la compagnie (prix = dépense de mission, poids ajouté à la
+-- capacité, produits déclarés/facturés normalement) ; bagage à main 8 kg : produits
+-- NON déclarés (jamais facturés, jamais dans la base douane/IFU, rien via la carte
+-- BEA) mais comptés dans le revenu, le prix du kilo, les bons de remise et la
+-- traçabilité. À l'arrivée : taxes réellement payées (remplacent la prévision) +
+-- photo du bon des douaniers + saisie éventuelle (traitée comme les manques :
+-- hors revenu et remboursée à la chambre au prix du manque).
+ALTER TABLE affectations ADD COLUMN IF NOT EXISTS emplacement TEXT NOT NULL DEFAULT 'soute'
+  CHECK (emplacement IN ('soute','main'));
+ALTER TABLE affectations ADD COLUMN IF NOT EXISTS saisis NUMERIC(10,2) NOT NULL DEFAULT 0;
+ALTER TABLE missions ADD COLUMN IF NOT EXISTS valise_sup        BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE missions ADD COLUMN IF NOT EXISTS valise_sup_prix   NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE missions ADD COLUMN IF NOT EXISTS valise_sup_kg     NUMERIC(6,2)  NOT NULL DEFAULT 23;
+ALTER TABLE missions ADD COLUMN IF NOT EXISTS bagage_main       BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE missions ADD COLUMN IF NOT EXISTS bagage_main_kg    NUMERIC(6,2)  NOT NULL DEFAULT 8;
+ALTER TABLE missions ADD COLUMN IF NOT EXISTS bagage_main_close BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE missions ADD COLUMN IF NOT EXISTS liquide_remis     NUMERIC(14,2);
+ALTER TABLE missions ADD COLUMN IF NOT EXISTS taxes_reelles     NUMERIC(14,2);
+ALTER TABLE missions ADD COLUMN IF NOT EXISTS arrivee_note      TEXT;
+ALTER TABLE missions ADD COLUMN IF NOT EXISTS saisie_da         NUMERIC(14,2) NOT NULL DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS mission_docs (
+  id         SERIAL PRIMARY KEY,
+  mission_id INTEGER NOT NULL REFERENCES missions(id) ON DELETE CASCADE,
+  type       TEXT NOT NULL,                            -- 'bon_douane'
+  mime       TEXT NOT NULL DEFAULT 'image/jpeg',
+  data       BYTEA NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_mission_docs ON mission_docs(mission_id);
+
+-- v14 — retour & créances : restes d'argent tracés (motif 'reste' : ce que le
+-- voyageur REND à l'agence — cash devise/DA, RMB Alipay… — réduit la dépense
+-- poche réelle), encaissements PAR DÉPÔT (paiements.chambre_id) et statut de
+-- remise par dépôt (à vérifier → vérifié → déposé → payé).
+ALTER TABLE tranches_devises DROP CONSTRAINT IF EXISTS tranches_devises_motif_check;
+ALTER TABLE tranches_devises ADD CONSTRAINT tranches_devises_motif_check
+  CHECK (motif IN ('voyage','depot_bloque','poche','reste'));
+ALTER TABLE paiements ADD COLUMN IF NOT EXISTS chambre_id INTEGER REFERENCES chambres(id);
+ALTER TABLE paiements ADD COLUMN IF NOT EXISTS user_id    INTEGER REFERENCES users(id);
+
+CREATE TABLE IF NOT EXISTS mission_depots (
+  id         SERIAL PRIMARY KEY,
+  mission_id INTEGER NOT NULL REFERENCES missions(id) ON DELETE CASCADE,
+  chambre_id INTEGER NOT NULL REFERENCES chambres(id),
+  statut     TEXT NOT NULL DEFAULT 'a_verifier'
+               CHECK (statut IN ('a_verifier','verifie','depose','paye')),
+  user_id    INTEGER REFERENCES users(id),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (mission_id, chambre_id)
+);
+
+-- v15 — numéro de téléphone de l'admin : affiché sur les bons (récupération et
+-- remise) pour que chambres et dépôts puissent le joindre. Réglable dans
+-- Réglages → Mon profil.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS tel TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_missions_voyageur ON missions(voyageur_id);
 CREATE INDEX IF NOT EXISTS idx_missions_statut   ON missions(statut);
 CREATE INDEX IF NOT EXISTS idx_produits_mission  ON produits_mission(mission_id);

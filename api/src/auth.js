@@ -50,7 +50,7 @@ authRouter.post('/login', loginLimiter, async (req, res) => {
   res.json({ token, role: user.role, nom: user.nom });
 });
 
-/** Middleware : requiert un token valide. */
+/** Middleware : requiert un token valide (défini plus bas, utilisé par /moi). */
 export function requireAuth(req, res, next) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
@@ -70,3 +70,22 @@ export const requireRole = (...roles) => (req, res, next) => {
   }
   next();
 };
+
+/* ---------- Mon profil ----------
+   Le téléphone de l'admin s'affiche sur les bons (récupération et remise)
+   pour que chambres et dépôts puissent le joindre. */
+authRouter.get('/moi', requireAuth, async (req, res) => {
+  const u = (await q(
+    'SELECT id, email, nom, role, tel FROM users WHERE id = $1', [req.user.sub])).rows[0];
+  if (!u) return res.status(404).json({ error: 'Compte introuvable.' });
+  res.json(u);
+});
+
+authRouter.put('/moi', requireAuth, async (req, res) => {
+  const parsed = z.object({ tel: z.string().max(40).optional().default('') }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'Données invalides.' });
+  const { rows } = await q(
+    'UPDATE users SET tel = $1 WHERE id = $2 RETURNING id, email, nom, role, tel',
+    [parsed.data.tel.trim(), req.user.sub]);
+  res.json(rows[0]);
+});

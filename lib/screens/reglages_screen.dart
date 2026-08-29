@@ -59,6 +59,14 @@ class _ReglagesScreenState extends State<ReglagesScreen> {
   ];
 
   bool _fetchTaux = false;
+  // Mon profil : téléphone de l'admin connecté — affiché sur les bons
+  // (récupération et remise) pour que chambres et dépôts puissent le joindre.
+  final _tel = TextEditingController();
+  bool _savingTel = false;
+  // La douane ajoute PARFOIS une marge de 30 % au CA avant l'IFU (0,5 %).
+  // Coché par défaut — décoche-le si les premiers voyages ne l'appliquent pas ;
+  // ajustable mission par mission à la clôture.
+  bool _ifuMarge30 = true;
 
   /// Cours OFFICIEL USD/DZD en direct — remplit le champ, l'admin garde la main.
   Future<void> _coursOfficiel() async {
@@ -87,14 +95,18 @@ class _ReglagesScreenState extends State<ReglagesScreen> {
 
   Future<void> _load() async {
     try {
-      final res = await Future.wait([Api.get('/reglages'), Api.get('/inventaire/societes')]);
+      final res = await Future.wait(
+          [Api.get('/reglages'), Api.get('/inventaire/societes'), Api.get('/auth/moi')]);
       final data = res[0] as Map;
       final socs = res[1] as List;
+      _tel.text = '${(res[2] as Map)['tel'] ?? ''}';
       if (!mounted) return;
       setState(() {
         for (final e in data.entries) {
+          if (e.key == 'ifu_marge_30') continue; // géré par l'interrupteur, pas un champ
           _c[e.key] = TextEditingController(text: '${e.value}');
         }
+        _ifuMarge30 = (num.tryParse('${data['ifu_marge_30']}') ?? 1) != 0;
         _societe = socs.isEmpty ? null : socs.first as Map;
         for (final (k, _) in _socChamps) {
           _sc[k] = TextEditingController(text: '${_societe?[k] ?? ''}');
@@ -126,8 +138,10 @@ class _ReglagesScreenState extends State<ReglagesScreen> {
   Future<void> _save() async {
     setState(() => _saving = true);
     try {
-      await Api.put('/reglages',
-          {for (final e in _c.entries) e.key: num.tryParse(e.value.text) ?? 0});
+      await Api.put('/reglages', {
+        for (final e in _c.entries) e.key: num.tryParse(e.value.text) ?? 0,
+        'ifu_marge_30': _ifuMarge30 ? 1 : 0,
+      });
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text('Réglages enregistrés ✓'), backgroundColor: Color(0xFF1E2A12)));
@@ -165,7 +179,7 @@ class _ReglagesScreenState extends State<ReglagesScreen> {
                   padding: const EdgeInsets.all(16),
                   child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                     Text(titre.toUpperCase(),
-                        style: const TextStyle(color: DzColors.lime, fontSize: 10,
+                        style: const TextStyle(color: DzColors.mut2, fontSize: 10,
                             fontWeight: FontWeight.w700, letterSpacing: 1.2)),
                     const SizedBox(height: 14),
                     for (final (cle, label) in champs) ...[
@@ -193,6 +207,17 @@ class _ReglagesScreenState extends State<ReglagesScreen> {
                             ),
                       const SizedBox(height: 14),
                     ],
+                    if (titre == 'Taux de change') ...[
+                      Row(children: [
+                        const Expanded(child: Text('Marge douane +30 % avant l’IFU (0,5 %)',
+                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600))),
+                        Switch(value: _ifuMarge30,
+                            onChanged: (v) => setState(() => _ifuMarge30 = v)),
+                      ]),
+                      const Text('Appliquée par défaut aux prévisions — '
+                          'ajustable mission par mission à la clôture.',
+                          style: TextStyle(color: DzColors.mut, fontSize: 11)),
+                    ],
                   ]),
                 ),
               ),
@@ -204,6 +229,48 @@ class _ReglagesScreenState extends State<ReglagesScreen> {
                   ? const SizedBox(height: 18, width: 18,
                       child: CircularProgressIndicator(strokeWidth: 2))
                   : const Text('Enregistrer les réglages'),
+            ),
+            const SizedBox(height: 16),
+            // ---- Mon profil : numéro affiché sur les bons ----
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                  const Text('MON PROFIL', style: TextStyle(color: DzColors.mut2, fontSize: 10,
+                      fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+                  const SizedBox(height: 14),
+                  Row(children: [
+                    Expanded(child: TextField(
+                      controller: _tel, keyboardType: TextInputType.phone,
+                      decoration: const InputDecoration(
+                          labelText: 'Mon numéro de téléphone — affiché sur les bons'),
+                    )),
+                    const SizedBox(width: 10),
+                    FilledButton(
+                      onPressed: _savingTel ? null : () async {
+                        setState(() => _savingTel = true);
+                        try {
+                          await Api.put('/auth/moi', {'tel': _tel.text.trim()});
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                                content: Text('Numéro enregistré ✓'),
+                                backgroundColor: Color(0xFF1E2A12)));
+                          }
+                        } on ApiException catch (e) {
+                          if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text(e.message)));
+                        } finally {
+                          if (mounted) setState(() => _savingTel = false);
+                        }
+                      },
+                      child: _savingTel
+                          ? const SizedBox(height: 16, width: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Text('OK'),
+                    ),
+                  ]),
+                ]),
+              ),
             ),
             const SizedBox(height: 28),
             // ---- Société de facturation ----
@@ -217,7 +284,7 @@ class _ReglagesScreenState extends State<ReglagesScreen> {
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                  const Text('SOCIÉTÉ PAR DÉFAUT', style: TextStyle(color: DzColors.lime, fontSize: 10,
+                  const Text('SOCIÉTÉ PAR DÉFAUT', style: TextStyle(color: DzColors.mut2, fontSize: 10,
                       fontWeight: FontWeight.w700, letterSpacing: 1.2)),
                   const SizedBox(height: 14),
                   for (final (cle, label) in _socChamps) ...[

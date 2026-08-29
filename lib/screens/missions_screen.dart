@@ -63,10 +63,13 @@ class _MissionsScreenState extends State<MissionsScreen> {
   // Même formule que le serveur : poche réelle (tranches) sinon jours × budget,
   // + taxes de carte (fournies par l'API). La marchandise n'est pas une dépense.
   num _frais(Map m) {
-    final poche = _nn(m, 'poche_da');
+    final poche = _nn(m, 'poche_da') > 0
+        ? _nn(m, 'poche_da') : _nn(m, 'jours') * _nn(m, 'budget_jour');
+    final pocheNette = poche - _nn(m, 'reste_da'); // restes rendus au retour
     return _nn(m, 'billet') + _nn(m, 'dem_cout') + _nn(m, 'frais_visa') +
-        (poche > 0 ? poche : _nn(m, 'jours') * _nn(m, 'budget_jour')) +
-        _nn(m, 'douane') + _nn(m, 'taxes_carte') + _nn(m, 'autres') + _nn(m, 'manques_da');
+        (pocheNette > 0 ? pocheNette : 0) +
+        _nn(m, 'douane') + _nn(m, 'taxes_carte') + _nn(m, 'autres') + _nn(m, 'manques_da') +
+        _nn(m, 'saisie_da') + (m['valise_sup'] == true ? _nn(m, 'valise_sup_prix') : 0);
   }
   num _benefDe(Map m) {
     final base = m['statut'] == 'cloturee' ? _nn(m, 'attendu') : _nn(m, 'revenu');
@@ -335,7 +338,7 @@ class _MissionsScreenState extends State<MissionsScreen> {
                   ),
                   const SizedBox(height: 20),
                   const Text('ASSIGNER LES VOYAGEURS',
-                      style: TextStyle(color: DzColors.lime, fontSize: 10,
+                      style: TextStyle(color: DzColors.mut2, fontSize: 10,
                           fontWeight: FontWeight.w700, letterSpacing: 1.2)),
                   const SizedBox(height: 4),
                   const Text('Une fiche mission sera créée pour chacun (sa valise, ses frais).',

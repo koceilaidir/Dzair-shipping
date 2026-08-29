@@ -201,7 +201,7 @@ Future<Map?> showChambreForm(BuildContext context, {Map? chambre, VoidCallback? 
                       decoration: const InputDecoration(labelText: 'Ville'))),
                 ]),
                 const SizedBox(height: 18),
-                const Text('DÉPÔT EN ALGÉRIE', style: TextStyle(color: DzColors.lime, fontSize: 10,
+                const Text('DÉPÔT EN ALGÉRIE', style: TextStyle(color: DzColors.mut2, fontSize: 10,
                     fontWeight: FontWeight.w700, letterSpacing: 1.2)),
                 const SizedBox(height: 8),
                 Row(children: [

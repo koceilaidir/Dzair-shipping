@@ -18,6 +18,67 @@ rapportsRouter.get('/activite', async (_req, res) => {
   res.json(rows);
 });
 
+/* ---------- Créances : qui doit quoi, mission par mission, dépôt par dépôt ----------
+   Missions clôturées : attendu / encaissé / reste à récupérer, avec le détail par
+   dépôt (dû = livré × gain, net des manquants et saisis) et l'historique des
+   versements. Le statut de remise par dépôt vient de mission_depots. */
+rapportsRouter.get('/creances', async (_req, res) => {
+  const missions = (await q(`
+    SELECT m.id, m.code, m.depot, m.attendu, m.cloture_date, m.depart, v.nom AS voyageur,
+           COALESCE((SELECT SUM(montant) FROM paiements WHERE mission_id = m.id), 0) AS encaisse
+    FROM missions m JOIN voyageurs v ON v.id = m.voyageur_id
+    WHERE m.statut = 'cloturee'
+    ORDER BY m.cloture_date DESC NULLS LAST, m.id DESC`)).rows;
+
+  const out = [];
+  let totalDu = 0, totalEncaisse = 0;
+  for (const m of missions) {
+    // Dû par dépôt (chambres) : pièces livrées × gain — manquants/saisis exclus.
+    const dus = (await q(`
+      SELECT c.id AS chambre_id, c.nom AS chambre,
+             SUM((a.quantite - COALESCE(a.manquants,0) - COALESCE(a.saisis,0)) *
+                 CASE WHEN l.mode = 'kg' THEN l.prix * l.poids_total / l.quantite ELSE l.prix END) AS du
+      FROM affectations a
+      JOIN bon_lignes l ON l.id = a.ligne_id
+      JOIN bons b ON b.id = l.bon_id
+      JOIN chambres c ON c.id = b.chambre_id
+      WHERE a.mission_id = $1 GROUP BY c.id, c.nom ORDER BY c.nom`, [m.id])).rows;
+    const verses = (await q(`
+      SELECT p.id, p.montant, p.date, p.note, p.chambre_id, c.nom AS chambre
+      FROM paiements p LEFT JOIN chambres c ON c.id = p.chambre_id
+      WHERE p.mission_id = $1 ORDER BY p.date, p.id`, [m.id])).rows;
+    const statuts = (await q(
+      `SELECT chambre_id, statut FROM mission_depots WHERE mission_id = $1`, [m.id])).rows;
+    const stMap = new Map(statuts.map((s) => [s.chambre_id, s.statut]));
+    const encParChambre = {};
+    for (const p of verses) {
+      if (p.chambre_id) encParChambre[p.chambre_id] = (encParChambre[p.chambre_id] || 0) + Number(p.montant);
+    }
+    const attendu = Number(m.attendu ?? 0), encaisse = Number(m.encaisse);
+    const reste = attendu - encaisse;
+    totalDu += Math.max(0, reste);
+    totalEncaisse += encaisse;
+    out.push({
+      id: m.id, code: m.code, voyageur: m.voyageur, depot: m.depot,
+      cloture_date: m.cloture_date, depart: m.depart,
+      attendu, encaisse, reste,
+      depots: dus.map((d) => ({
+        chambre_id: d.chambre_id, chambre: d.chambre, du: Math.round(Number(d.du)),
+        encaisse: Math.round(encParChambre[d.chambre_id] || 0),
+        statut: stMap.get(d.chambre_id) || 'a_verifier',
+      })),
+      versements: verses.map((p) => ({
+        id: p.id, montant: Number(p.montant), date: p.date, note: p.note, chambre: p.chambre,
+      })),
+    });
+  }
+  res.json({
+    total_a_recuperer: Math.round(totalDu),
+    total_encaisse: Math.round(totalEncaisse),
+    missions: out,
+  });
+});
+
 /* ---------- Finance : agrégats de comptabilité ---------- */
 rapportsRouter.get('/finance', async (_req, res) => {
   const reglages = await getReglages();
@@ -32,6 +93,8 @@ rapportsRouter.get('/finance', async (_req, res) => {
                      WHERE mission_id=m.id AND motif='voyage'),0) AS marchandise_da,
            COALESCE((SELECT SUM(usd*taux) FROM tranches_devises
                      WHERE mission_id=m.id AND motif='poche'),0)  AS poche_da,
+           COALESCE((SELECT SUM(usd*taux) FROM tranches_devises
+                     WHERE mission_id=m.id AND motif='reste'),0)  AS reste_da,
            COALESCE((SELECT SUM(montant)    FROM paiements        WHERE mission_id=m.id),0) AS encaisse
     FROM missions m JOIN voyageurs v ON v.id=m.voyageur_id
     WHERE m.statut <> 'annulee'`)).rows;
@@ -52,8 +115,10 @@ rapportsRouter.get('/finance', async (_req, res) => {
   };
   const fraisDe = (m) =>
     Number(m.billet) + Number(m.dem_cout) + Number(m.frais_visa || 0) +
-    (Number(m.poche_da) > 0 ? Number(m.poche_da) : Number(m.jours) * Number(m.budget_jour)) +
-    Number(m.douane) + taxesCarteDe(m) + Number(m.autres) + Number(m.manques_da || 0);
+    Math.max(0, (Number(m.poche_da) > 0 ? Number(m.poche_da) : Number(m.jours) * Number(m.budget_jour))
+      - Number(m.reste_da || 0)) + // restes rendus au retour : la poche réelle = donné − rendu
+    Number(m.douane) + taxesCarteDe(m) + Number(m.autres) + Number(m.manques_da || 0) +
+    Number(m.saisie_da || 0) + (m.valise_sup ? Number(m.valise_sup_prix || 0) : 0);
 
   let sortis = 0, revenus = 0, netAgence = 0, creances = 0, partVoyageurs = 0;
   const parMois = {};
