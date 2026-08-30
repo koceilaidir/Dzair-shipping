@@ -13,7 +13,6 @@ if (!SECRET || SECRET.length < 32) {
 
 export const authRouter = Router();
 
-// Anti brute-force : 10 tentatives / 15 min / IP sur le login.
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
@@ -37,7 +36,7 @@ authRouter.post('/login', loginLimiter, async (req, res) => {
     [email.toLowerCase()],
   );
   const user = rows[0];
-  // Réponse identique que l'email existe ou non → pas d'énumération de comptes.
+
   if (!user || !user.actif || !(await bcrypt.compare(password, user.password_hash))) {
     return res.status(401).json({ error: 'Identifiants incorrects.' });
   }
@@ -50,7 +49,6 @@ authRouter.post('/login', loginLimiter, async (req, res) => {
   res.json({ token, role: user.role, nom: user.nom });
 });
 
-/** Middleware : requiert un token valide (défini plus bas, utilisé par /moi). */
 export function requireAuth(req, res, next) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
@@ -63,7 +61,6 @@ export function requireAuth(req, res, next) {
   }
 }
 
-/** Middleware : requiert un rôle précis (vérifié CÔTÉ SERVEUR, toujours). */
 export const requireRole = (...roles) => (req, res, next) => {
   if (!req.user || !roles.includes(req.user.role)) {
     return res.status(403).json({ error: 'Accès refusé.' });
@@ -71,9 +68,6 @@ export const requireRole = (...roles) => (req, res, next) => {
   next();
 };
 
-/* ---------- Mon profil ----------
-   Le téléphone de l'admin s'affiche sur les bons (récupération et remise)
-   pour que chambres et dépôts puissent le joindre. */
 authRouter.get('/moi', requireAuth, async (req, res) => {
   const u = (await q(
     'SELECT id, email, nom, role, tel FROM users WHERE id = $1', [req.user.sub])).rows[0];

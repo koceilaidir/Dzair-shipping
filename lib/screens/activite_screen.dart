@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import '../services/api.dart';
 import '../theme.dart';
 
-/// Activité — journal de tout ce qui se fait (qui, quoi, quand).
 class ActiviteScreen extends StatefulWidget {
   const ActiviteScreen({super.key});
   @override
@@ -48,7 +47,6 @@ class _ActiviteScreenState extends State<ActiviteScreen> {
   String _f(num n) => n.toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d)(?=(\d{3})+$)'), (m) => '${m[1]} ');
   double _n(dynamic v) => v == null ? 0 : (num.tryParse('$v') ?? 0).toDouble();
 
-  /// Ligne de détail lisible selon l'action et l'entité (quelle mission, quelle chambre, quoi).
   String _detail(String action, String entite, Map d) {
     String s(dynamic v) => v == null ? '' : '$v';
     switch (action) {
@@ -129,7 +127,7 @@ class _ActiviteScreenState extends State<ActiviteScreen> {
     final entite = '${a['entite']}';
     final (verbe, icon, col) = _style(action);
     final details = a['details'] is Map ? a['details'] as Map : <String, dynamic>{};
-    // Référence : code de mission (+ voyageur), nom de chambre/voyageur.
+
     var ref = '${details['code'] ?? details['nom'] ?? ''}';
     if (entite == 'mission' && details['voyageur'] != null && (action == 'valise_ajout' || action == 'valise_retrait')) {
       ref = '${details['voyageur']} ($ref)';
@@ -140,7 +138,7 @@ class _ActiviteScreenState extends State<ActiviteScreen> {
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
       decoration: BoxDecoration(color: DzColors.card,
-          borderRadius: BorderRadius.circular(14), border: Border.all(color: DzColors.line)),
+          borderRadius: BorderRadius.circular(14)),
       child: Row(children: [
         Container(width: 32, height: 32, alignment: Alignment.center,
             decoration: BoxDecoration(color: col.withValues(alpha: .13),

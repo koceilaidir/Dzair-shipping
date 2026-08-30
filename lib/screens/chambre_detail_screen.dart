@@ -5,8 +5,6 @@ import '../widgets/date_field.dart';
 import 'chambres_screen.dart' show showChambreForm;
 import '../services/download.dart';
 
-/// Fiche chambre en page (sidebar conservée sur PC) : infos, contacts Chine / Algérie,
-/// performances filtrables par année et par mois, historique des bons.
 class ChambreDetailScreen extends StatefulWidget {
   final int id;
   final bool embedded;
@@ -19,8 +17,8 @@ class ChambreDetailScreen extends StatefulWidget {
 class _ChambreDetailScreenState extends State<ChambreDetailScreen> {
   Map? _c;
   String? _error;
-  int? _annee;   // null = toutes
-  int? _mois;    // null = tous (1..12)
+  int? _annee;
+  int? _mois;
 
   static const _moisCourts = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sep', 'Oct', 'Nov', 'Déc'];
 
@@ -33,7 +31,7 @@ class _ChambreDetailScreenState extends State<ChambreDetailScreen> {
       if (!mounted) return;
       setState(() {
         _c = d; _error = null;
-        // Par défaut : l'année du dernier bon.
+
         if (_annee == null) {
           final bons = d['bons'] as List;
           if (bons.isNotEmpty) _annee = DateTime.tryParse('${bons.first['date']}'.substring(0, 10))?.year;
@@ -138,7 +136,6 @@ class _ChambreDetailScreenState extends State<ChambreDetailScreen> {
       else ...[infos, const SizedBox(height: 12), contactsCard],
       const SizedBox(height: 12),
 
-      // ---- Performances : filtres année / mois ----
       _card('Performances', action: _filtres(), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Row(children: [
           Expanded(child: _kpi('Bons', '${bf.length}', Icons.receipt_long_outlined)),
@@ -155,7 +152,6 @@ class _ChambreDetailScreenState extends State<ChambreDetailScreen> {
       ])),
       const SizedBox(height: 12),
 
-      // ---- Historique des bons ----
       _card('Historique des bons${_annee != null ? ' · $_annee' : ''}${_mois != null ? ' · ${_moisCourts[_mois! - 1]}' : ''}',
           child: Column(children: [
         if (bf.isEmpty)
@@ -216,7 +212,7 @@ class _ChambreDetailScreenState extends State<ChambreDetailScreen> {
             child: Text(it.$2, style: const TextStyle(fontSize: 13)))],
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          decoration: BoxDecoration(color: DzColors.card2, border: Border.all(color: DzColors.line),
+          decoration: BoxDecoration(color: DzColors.card2,
               borderRadius: BorderRadius.circular(99)),
           child: Row(mainAxisSize: MainAxisSize.min, children: [
             Text(label, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600)),
@@ -225,7 +221,6 @@ class _ChambreDetailScreenState extends State<ChambreDetailScreen> {
         ),
       );
 
-  /// Barres du gain DA par mois (sur l'année choisie ; toutes années → par année).
   Widget _barresMois() {
     final Map<String, double> par = {};
     final List<String> cles;
@@ -295,8 +290,7 @@ class _ChambreDetailScreenState extends State<ChambreDetailScreen> {
 
   Widget _kpi(String label, String valeur, IconData ic, {Color accent = DzColors.mut, String? sous}) => Container(
         padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-        decoration: BoxDecoration(color: DzColors.card2, borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: DzColors.line)),
+        decoration: BoxDecoration(color: DzColors.card2, borderRadius: BorderRadius.circular(12)),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
             Icon(ic, size: 13, color: accent),
@@ -311,8 +305,7 @@ class _ChambreDetailScreenState extends State<ChambreDetailScreen> {
       );
 
   Widget _card(String titre, {Widget? action, required Widget child}) => Container(
-        decoration: BoxDecoration(color: DzColors.card, borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: DzColors.line)),
+        decoration: BoxDecoration(color: DzColors.card, borderRadius: BorderRadius.circular(16)),
         padding: const EdgeInsets.fromLTRB(16, 12, 12, 14),
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           SizedBox(height: 40, child: Row(children: [

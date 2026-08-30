@@ -2,11 +2,8 @@ import 'package:flutter/material.dart';
 import '../services/api.dart';
 import '../services/download.dart';
 import '../theme.dart';
+import '../widgets/encaisser_dialog.dart';
 
-/// Rapport dépôts d'une mission : après l'arrivée, Koceila génère les bons,
-/// compte et vérifie, dépose la marchandise aux dépôts (chambres) puis encaisse.
-/// Par dépôt : produits livrés (net des manquants/saisis), kg, DA dus,
-/// bon de remise PDF, statut (à vérifier → vérifié → déposé → payé) et versements.
 class RapportDepotsScreen extends StatefulWidget {
   final int missionId;
   final String code;
@@ -63,50 +60,25 @@ class _RapportDepotsScreenState extends State<RapportDepotsScreen> {
   }
 
   Future<void> _encaisser(Map d) async {
-    final montant = TextEditingController(
-        text: (_n(d['total_da']) - _n(d['encaisse'])).clamp(0, double.infinity).toStringAsFixed(0));
-    final note = TextEditingController(text: 'versement ${d['chambre']}');
-    await showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: DzColors.card,
-        title: Text('Encaisser — ${d['chambre']}', style: const TextStyle(fontSize: 16)),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          Text('Dû ${_f(_n(d['total_da']))} DA · déjà versé ${_f(_n(d['encaisse']))} DA',
-              style: const TextStyle(color: DzColors.mut, fontSize: 12)),
-          const SizedBox(height: 14),
-          TextField(controller: montant, keyboardType: TextInputType.number, autofocus: true,
-              decoration: const InputDecoration(labelText: 'Montant reçu (DA)')),
-          const SizedBox(height: 12),
-          TextField(controller: note, decoration: const InputDecoration(labelText: 'Note')),
-        ]),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
-          FilledButton(
-            onPressed: () async {
-              Navigator.pop(ctx);
-              try {
-                await Api.post('/missions/${widget.missionId}/paiements', {
-                  'montant': num.tryParse(montant.text.replaceAll(' ', '')) ?? 0,
-                  'note': note.text.trim(),
-                  'chambre_id': d['chambre_id'],
-                });
-                await _load();
-                // Tout versé → statut « payé » proposé automatiquement.
-                if (mounted) {
-                  final maj = (_depots ?? []).cast<Map>().firstWhere(
-                      (x) => x['chambre_id'] == d['chambre_id'], orElse: () => d);
-                  if (_n(maj['encaisse']) >= _n(maj['total_da']) - 0.5 && maj['statut'] != 'paye') {
-                    _setStatut(maj, 'paye');
-                  }
-                }
-              } on ApiException catch (e) { _snack(e.message); }
-            },
-            child: const Text('Encaisser'),
-          ),
-        ],
-      ),
+    final reste = (_n(d['total_da']) - _n(d['encaisse'])).clamp(0.0, double.infinity);
+    final ok = await montrerEncaisserDialog(
+      context,
+      missionId: widget.missionId,
+      titre: 'Encaisser — ${d['chambre']}',
+      suggereDA: reste.toDouble(),
+      chambreId: d['chambre_id'] as int?,
+      noteInitiale: 'versement ${d['chambre']}',
     );
+    if (!ok) return;
+    await _load();
+
+    if (mounted) {
+      final maj = (_depots ?? []).cast<Map>().firstWhere(
+          (x) => x['chambre_id'] == d['chambre_id'], orElse: () => d);
+      if (_n(maj['encaisse']) >= _n(maj['total_da']) - 0.5 && maj['statut'] != 'paye') {
+        _setStatut(maj, 'paye');
+      }
+    }
   }
 
   void _snack(String msg) {
@@ -160,7 +132,6 @@ class _RapportDepotsScreenState extends State<RapportDepotsScreen> {
       decoration: BoxDecoration(
         color: DzColors.card,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: DzColors.line),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Row(children: [
@@ -174,13 +145,19 @@ class _RapportDepotsScreenState extends State<RapportDepotsScreen> {
             ]),
           ),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
             decoration: BoxDecoration(
+              color: DzColors.card2,
               borderRadius: BorderRadius.circular(99),
-              border: Border.all(color: _statutColor(statut).withValues(alpha: .5)),
             ),
-            child: Text(_statuts.firstWhere((s) => s.$1 == statut, orElse: () => _statuts.first).$2,
-                style: TextStyle(color: _statutColor(statut), fontSize: 11, fontWeight: FontWeight.w700)),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Container(width: 6, height: 6,
+                  decoration: BoxDecoration(
+                      color: _statutColor(statut), shape: BoxShape.circle)),
+              const SizedBox(width: 6),
+              Text(_statuts.firstWhere((s) => s.$1 == statut, orElse: () => _statuts.first).$2,
+                  style: TextStyle(color: _statutColor(statut), fontSize: 11, fontWeight: FontWeight.w700)),
+            ]),
           ),
         ]),
         const SizedBox(height: 10),
@@ -217,7 +194,7 @@ class _RapportDepotsScreenState extends State<RapportDepotsScreen> {
         ]),
         const SizedBox(height: 10),
         Wrap(spacing: 8, runSpacing: 6, children: [
-          // Avancement du statut, étape par étape.
+
           for (var i = 0; i < _statuts.length; i++)
             if (_statuts[i].$1 != statut)
               OutlinedButton(

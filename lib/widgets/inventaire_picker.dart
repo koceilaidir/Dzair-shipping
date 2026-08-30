@@ -2,24 +2,13 @@ import 'package:flutter/material.dart';
 import '../services/api.dart';
 import '../theme.dart';
 
-/// Sélecteur d'inventaire pour remplir la valise (ou le bagage à main) d'une mission.
-/// Liste du stock (DA/kg, kg dispo, qté restante) avec saisie de la quantité,
-/// et suggestion ÉQUITABLE : on garde aux autres voyageurs du même séjour
-/// (dates qui se chevauchent) de quoi atteindre leur objectif.
-///
-/// emplacement 'main' = bagage à main : produits JAMAIS déclarés ni facturés
-/// (pas de prix déclaré) — suggestion anti-saisie : variée, max 2 pièces / produit,
-/// et JAMAIS un produit déjà dans la valise déclarée (dejaValise) — on peut quand
-/// même en ajouter à la main si on n'a pas le choix.
-///
-/// Retourne true si au moins une affectation a été enregistrée.
 Future<bool> showInventairePicker(BuildContext context, {
   required int missionId,
-  required double kgDispo,      // place restante dans la valise
-  required double manqueDA,     // ce qu'il manque pour atteindre l'objectif
-  required double prixKiloMin,  // seuil DA/kg pour couvrir dépenses + objectif
+  required double kgDispo,
+  required double manqueDA,
+  required double prixKiloMin,
   String emplacement = 'soute',
-  Set<int> dejaValise = const {}, // ligne_ids déjà dans la valise déclarée de la mission
+  Set<int> dejaValise = const {},
 }) async {
   final main = emplacement == 'main';
   Map data;
@@ -31,8 +20,7 @@ Future<bool> showInventairePicker(BuildContext context, {
   if (!context.mounted) return false;
   final lignes = ((data['lignes'] as List).where((l) => _n(l['restant']) > 0).toList())
     ..sort((a, b) => _n(b['gain_kg']).compareTo(_n(a['gain_kg'])));
-  // Bagage à main : les produits déjà dans la valise déclarée passent EN DERNIER
-  // (visibles mais jamais suggérés — la douane croise valise ↔ factures).
+
   bool enValise(Map l) => main && dejaValise.contains(l['id'] as int);
   if (main) {
     lignes.sort((a, b) {
@@ -42,13 +30,11 @@ Future<bool> showInventairePicker(BuildContext context, {
     });
   }
   final concurrents = (data['concurrents'] as List).cast<Map>();
-  // Manque ¥ → \$ au cours croisé OFFICIEL du jour (USD/CNY) : repère pour le prix à déclarer.
+
   final usdCny = _n(data['usd_cny']);
 
-  // ---- Réservations pour les autres (même séjour) : les MEILLEURS kilos d'abord,
-  //      juste assez pour couvrir leur manque, dans la limite de leur place. ----
-  final reserve = <int, double>{};        // ligne_id → pièces réservées
-  final reservePar = <int, String>{};     // ligne_id → qui
+  final reserve = <int, double>{};
+  final reservePar = <int, String>{};
   final libre = {for (final l in lignes) l['id'] as int: _n(l['restant'])};
   for (final c in concurrents) {
     var besoinDA = _n(c['manque_da']);
@@ -70,17 +56,12 @@ Future<bool> showInventairePicker(BuildContext context, {
     }
   }
 
-  // ---- Suggestion pour CE voyageur ----
-  // Bagage à main (non déclaré) : ANTI-SAISIE — mix varié, MAX 2 pièces par
-  // produit, meilleurs gains d'abord, dans la limite des 8 kg.
-  // Valise : son objectif d'abord (meilleurs kilos libres), puis complément
-  // avec le reste (moins bons d'abord) jusqu'à remplir.
   final sugg = <int, double>{};
   if (main) {
     var place = kgDispo;
     for (final l in lignes) {
       if (place <= 0) break;
-      if (enValise(l)) continue; // jamais suggéré : déjà déclaré dans la valise
+      if (enValise(l)) continue;
       final id = l['id'] as int;
       final pu = _n(l['poids_unit']);
       final dispo = libre[id]!;
@@ -92,7 +73,7 @@ Future<bool> showInventairePicker(BuildContext context, {
     }
   } else {
     var besoin = manqueDA, place = kgDispo;
-    for (final l in lignes) {                       // objectif : meilleurs d'abord
+    for (final l in lignes) {
       if (besoin <= 0 || place <= 0) break;
       final id = l['id'] as int;
       final gp = _n(l['gain_piece']), pu = _n(l['poids_unit']);
@@ -102,7 +83,7 @@ Future<bool> showInventairePicker(BuildContext context, {
       if (pcs <= 0) continue;
       sugg[id] = pcs; besoin -= pcs * gp; place -= pcs * pu;
     }
-    for (final l in lignes.reversed) {              // complément : les moins bons d'abord
+    for (final l in lignes.reversed) {
       if (place <= 0) break;
       final id = l['id'] as int;
       final pu = _n(l['poids_unit']);
@@ -116,9 +97,7 @@ Future<bool> showInventairePicker(BuildContext context, {
 
   final ctrls = {for (final l in lignes) l['id'] as int: TextEditingController(
       text: (sugg[l['id'] as int] ?? 0) > 0 ? _f0(sugg[l['id'] as int]!) : '')};
-  // Prix DÉCLARÉ (USD / pièce) : le prix de vente de la société au voyageur —
-  // c'est lui qui va sur la facture et qui sert aux taxes. Pré-rempli avec le
-  // dernier prix connu pour ce lot.
+
   final prixCtrls = {for (final l in lignes) l['id'] as int: TextEditingController(
       text: _n(l['prix_declare']) > 0 ? _n(l['prix_declare']).toStringAsFixed(2).replaceAll('.00', '') : '')};
   bool saving = false;
@@ -136,7 +115,7 @@ Future<bool> showInventairePicker(BuildContext context, {
         daChoisi += q * _n(l['gain_piece']);
         usdDeclare += q * px;
         if (!main && q > 0 && px <= 0) prixManquant = true;
-        if (main && q > 2) tropVariete = true; // anti-saisie : varie, 2 pc max conseillé
+        if (main && q > 2) tropVariete = true;
       }
       final depasse = kgChoisi > kgDispo + 1e-6;
 
@@ -182,7 +161,7 @@ Future<bool> showInventairePicker(BuildContext context, {
                             '(${concurrents.map((c) => c['voyageur']).join(', ')}) : leurs meilleurs kilos sont réservés.',
                   style: TextStyle(color: main ? DzColors.amber : DzColors.mut, fontSize: 11.5)),
               const SizedBox(height: 12),
-              // Bandeau état valise
+
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 decoration: BoxDecoration(
@@ -215,7 +194,7 @@ Future<bool> showInventairePicker(BuildContext context, {
                   ]),
                 ),
               const SizedBox(height: 10),
-              // En-tête colonnes
+
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 child: Row(children: [
@@ -291,8 +270,7 @@ Widget _row(Map l, TextEditingController c, TextEditingController px, double lib
                 child: Text('suggéré ${_f0(sugg)}', style: const TextStyle(color: DzColors.lime, fontSize: 9, fontWeight: FontWeight.w700))),
           ],
         ]),
-        // Origine + prix + manque (≈ \$ au cours USD/CNY du jour — repère pour
-        // le prix à déclarer) : on ne confond jamais les lots.
+
         Text('${l['chambre_nom']} · ${_n(l['poids_unit']).toStringAsFixed(2)} kg/pc · '
             '${l['mode'] == 'kg' ? '${_f0(_n(l['prix']))} DA/kg' : '${_f0(_n(l['prix']))} DA/pc'}'
             ' · manque ${_f0(_n(l['manque_rmb']))} ¥'

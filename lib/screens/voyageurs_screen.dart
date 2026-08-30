@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../services/api.dart';
 import '../theme.dart';
 import '../widgets/date_field.dart';
 import 'voyageur_detail_screen.dart';
 
-/// Module Voyageurs — liste + fiche détaillée en page (maître-détail sur PC).
 class VoyageursScreen extends StatefulWidget {
   const VoyageursScreen({super.key});
 
@@ -140,26 +140,28 @@ class _VoyageursScreenState extends State<VoyageursScreen> {
     );
   }
 
-  /// Statut de disponibilité, affiché à droite de la liste.
-  /// « Limite » se pose tout seul (2 missions dans le mois) — jamais à la main.
   Widget _statutChip(Map v) {
     final (label, c) = switch ('${v['statut_dispo']}') {
       'indisponible' => ('Indisponible', DzColors.red),
       'limite' => ('Limite 2/2', DzColors.amber),
       _ => ('Disponible', DzColors.lime),
     };
+
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: c.withValues(alpha: .12),
+        color: DzColors.card2,
         borderRadius: BorderRadius.circular(99),
       ),
-      child: Text(label,
-          style: TextStyle(color: c, fontSize: 10, fontWeight: FontWeight.w700)),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Container(width: 6, height: 6,
+            decoration: BoxDecoration(color: c, shape: BoxShape.circle)),
+        const SizedBox(width: 6),
+        Text(label, style: TextStyle(color: c, fontSize: 10, fontWeight: FontWeight.w700)),
+      ]),
     );
   }
 
-  /// Badges d'alerte : passeport (8 mois avant) et autorisation ANAE (60 j avant).
   List<Widget> _alertesValidite(Map v) {
     final out = <Widget>[];
     final now = DateTime.now();
@@ -189,7 +191,7 @@ class _VoyageursScreenState extends State<VoyageursScreen> {
         badge('Autorisation expire le ${dateFr(isoDate(aut))}', DzColors.amber);
       }
     }
-    // Allocation touristique : texte seul (sans icône), en lime quand disponible.
+
     if (v['allocation_eligible'] == true) {
       final der = parse(v['allocation_derniere']);
       if (der == null || now.difference(der).inDays >= 365) {
@@ -199,9 +201,55 @@ class _VoyageursScreenState extends State<VoyageursScreen> {
     return out;
   }
 
+  void _montrerMotDePasse(String nom, String email, String mdp) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: DzColors.card,
+        title: Text('Compte créé pour $nom', style: const TextStyle(fontSize: 16)),
+        content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('Note ces identifiants MAINTENANT — le mot de passe ne sera plus jamais affiché.',
+              style: TextStyle(color: DzColors.amber, fontSize: 12)),
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: DzColors.card2,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(email, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 6),
+              Row(children: [
+                Expanded(child: SelectableText(mdp,
+                    style: const TextStyle(color: DzColors.lime, fontSize: 17,
+                        fontWeight: FontWeight.w800, letterSpacing: 1.5))),
+                IconButton(
+                  tooltip: 'Copier',
+                  onPressed: () {
+                    Clipboard.setData(ClipboardData(text: 'Email : $email\nMot de passe : $mdp'));
+                    ScaffoldMessenger.of(ctx).showSnackBar(
+                        const SnackBar(content: Text('Identifiants copiés.')));
+                  },
+                  icon: const Icon(Icons.copy_rounded, size: 18, color: DzColors.txt2),
+                ),
+              ]),
+            ]),
+          ),
+        ]),
+        actions: [
+          FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('C’est noté')),
+        ],
+      ),
+    );
+  }
+
   Future<void> _openForm([Map? v]) async {
     final nom = TextEditingController(text: v?['nom'] ?? '');
     final tel = TextEditingController(text: v?['tel'] ?? '');
+    final email = TextEditingController(text: v?['email'] ?? '');
+    final aDejaCompte = '${v?['email'] ?? ''}'.isNotEmpty;
     final nomPass = TextEditingController(text: v?['nom_passeport'] ?? '');
     final adresse = TextEditingController(text: v?['adresse'] ?? '');
     final wilaya = TextEditingController(text: v?['wilaya'] ?? '');
@@ -241,15 +289,22 @@ class _VoyageursScreenState extends State<VoyageursScreen> {
             'nom_passeport': nomPass.text.trim(),
             'adresse': adresse.text.trim(),
             'wilaya': wilaya.text.trim(),
+            if (email.text.trim().isNotEmpty && !aDejaCompte) 'email': email.text.trim(),
           };
           try {
+            final Map r;
             if (v == null) {
-              await Api.post('/voyageurs', body);
+              r = await Api.post('/voyageurs', body) as Map;
             } else {
-              await Api.put('/voyageurs/${v['id']}', body);
+              r = await Api.put('/voyageurs/${v['id']}', body) as Map;
             }
             if (ctx.mounted) Navigator.pop(ctx);
             _load();
+
+            final mdp = r['mot_de_passe_initial'];
+            if (mdp != null && mounted) {
+              _montrerMotDePasse(nom.text.trim(), email.text.trim(), '$mdp');
+            }
           } on ApiException catch (e) {
             setSt(() => saving = false);
             if (ctx.mounted) {
@@ -284,7 +339,23 @@ class _VoyageursScreenState extends State<VoyageursScreen> {
                       decoration: const InputDecoration(labelText: 'Membre depuis'))),
                 ]),
                 const SizedBox(height: 16),
-                const Text('IDENTITÉ CLIENT (FACTURES)', style: TextStyle(color: DzColors.mut2, fontSize: 10,
+                const Text('COMPTE DE CONNEXION', style: TextStyle(color: DzColors.mut, fontSize: 11,
+                    fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: email,
+                  enabled: !aDejaCompte,
+                  keyboardType: TextInputType.emailAddress,
+                  decoration: InputDecoration(
+                    labelText: 'Email du voyageur',
+                    helperText: aDejaCompte
+                        ? 'Ce voyageur a déjà son compte.'
+                        : 'Optionnel — un compte avec mot de passe généré sera créé automatiquement.',
+                    helperStyle: const TextStyle(color: DzColors.mut, fontSize: 10.5),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Text('IDENTITÉ CLIENT (FACTURES)', style: TextStyle(color: DzColors.mut, fontSize: 11,
                     fontWeight: FontWeight.w700, letterSpacing: 1.2)),
                 const SizedBox(height: 8),
                 TextField(controller: nomPass, textCapitalization: TextCapitalization.characters,

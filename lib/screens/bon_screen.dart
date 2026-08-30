@@ -4,11 +4,9 @@ import '../theme.dart';
 import '../widgets/date_field.dart';
 import 'chambres_screen.dart' show showChambreForm;
 
-/// Ouvrir un bon de récupération — en PAGE (la liste peut être longue).
-/// 1) chambre (recherche → suggestion / création rapide)  2) lignes produits.
 class BonScreen extends StatefulWidget {
   final bool embedded;
-  final VoidCallback? onBack;   // appelé après enregistrement ou annulation
+  final VoidCallback? onBack;
   const BonScreen({super.key, this.embedded = false, this.onBack});
   @override
   State<BonScreen> createState() => _BonScreenState();
@@ -18,9 +16,9 @@ class _BonScreenState extends State<BonScreen> {
   List<dynamic>? _chambres;
   String? _error;
   Map? _chambre;
-  int? _bonOuvertId;      // bon récent de la chambre (≤ 15 j) → on peut y AJOUTER
+  int? _bonOuvertId;
   String? _bonOuvertDate;
-  bool _ajouterAuBon = true; // défaut : ajouter au même bon (passages multiples du séjour)
+  bool _ajouterAuBon = true;
   final _recherche = TextEditingController();
   DateTime _date = DateTime.now();
   final _note = TextEditingController();
@@ -42,8 +40,6 @@ class _BonScreenState extends State<BonScreen> {
   String _f(num n) => n.toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d)(?=(\d{3})+$)'), (m) => '${m[1]} ');
   List<_LigneCtrl> get _valides => _lignes.where((l) => l.valide).toList();
 
-  /// Chambre choisie : si son dernier bon date de ≤ 15 jours (même séjour),
-  /// on propose d'y AJOUTER les nouveaux produits (défaut).
   void _choisirChambre(Map c) {
     int? bonId; String? bonDate;
     final der = c['dernier_bon'];
@@ -121,7 +117,7 @@ class _BonScreenState extends State<BonScreen> {
     return Column(children: [
       Expanded(
         child: ListView(padding: const EdgeInsets.fromLTRB(16, 10, 16, 16), children: [
-          // ---- 1 · Chambre ----
+
           _card('1 · Chambre', child: _chambre != null
               ? Container(
                   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -167,8 +163,7 @@ class _BonScreenState extends State<BonScreen> {
                     ),
                   ]),
                 ])),
-          // Passages multiples dans la même chambre pendant le séjour :
-          // par défaut on AJOUTE les produits au bon ouvert, sinon nouveau bon.
+
           if (_chambre != null && _bonOuvertId != null) ...[
             const SizedBox(height: 10),
             Container(
@@ -213,7 +208,6 @@ class _BonScreenState extends State<BonScreen> {
           ]),
           const SizedBox(height: 12),
 
-          // ---- 2 · Produits ----
           _card('2 · Produits récupérés',
               action: TextButton.icon(onPressed: () => setState(() => _lignes.add(_LigneCtrl())),
                   icon: const Icon(Icons.add, size: 15), label: const Text('Ligne', style: TextStyle(fontSize: 12))),
@@ -229,7 +223,7 @@ class _BonScreenState extends State<BonScreen> {
               ])),
         ]),
       ),
-      // ---- Barre de total + enregistrer (fixe en bas) ----
+
       Container(
         padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
         decoration: const BoxDecoration(color: DzColors.panel, border: Border(top: BorderSide(color: DzColors.line))),
@@ -256,8 +250,7 @@ class _BonScreenState extends State<BonScreen> {
   }
 
   Widget _card(String titre, {Widget? action, required Widget child}) => Container(
-        decoration: BoxDecoration(color: DzColors.card, borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: DzColors.line)),
+        decoration: BoxDecoration(color: DzColors.card, borderRadius: BorderRadius.circular(16)),
         padding: const EdgeInsets.fromLTRB(16, 12, 12, 14),
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           SizedBox(height: 40, child: Row(children: [
@@ -269,7 +262,6 @@ class _BonScreenState extends State<BonScreen> {
         ]),
       );
 
-  /// Une ligne du bon : produit · qté · poids total · manque ¥ · KG/PCS · prix → calculs en direct.
   Widget _ligneForm(int i, _LigneCtrl l, VoidCallback onChange, VoidCallback? onRemove) => Container(
         margin: const EdgeInsets.only(bottom: 8),
         padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),

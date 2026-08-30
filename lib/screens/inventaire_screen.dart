@@ -4,8 +4,6 @@ import '../theme.dart';
 import '../widgets/date_field.dart';
 import 'bon_screen.dart';
 
-/// Inventaire — le stock récupéré dans les chambres (à l'hôtel), avant répartition
-/// dans les valises. « Ouvrir un bon » = chambre + liste des produits récupérés.
 class InventaireScreen extends StatefulWidget {
   const InventaireScreen({super.key});
   @override
@@ -14,15 +12,15 @@ class InventaireScreen extends StatefulWidget {
 
 class _InventaireScreenState extends State<InventaireScreen> {
   List<dynamic>? _lignes;
-  Map? _seuil;             // seuil de collecte du séjour (missions ouvertes)
+  Map? _seuil;
   List _ouvertes = [];
   String? _error;
   bool _voirEpuises = false;
-  String _tri = 'gain_kg'; // gain_kg | recent | kg | quantite
-  int? _filtreChambre;     // null = toutes les chambres
-  String _statutFiltre = 'tous'; // tous | hotel | valise
+  String _tri = 'gain_kg';
+  int? _filtreChambre;
+  String _statutFiltre = 'tous';
   double _tauxUsd = 0, _usdCny = 0;
-  bool _creation = false;  // page « nouveau bon » ouverte dans la zone de contenu (PC)
+  bool _creation = false;
 
   @override
   void initState() { super.initState(); _load(); }
@@ -55,12 +53,9 @@ class _InventaireScreenState extends State<InventaireScreen> {
     if (_error != null) return Center(child: Text(_error!, style: const TextStyle(color: DzColors.mut)));
     if (_lignes == null) return const Center(child: CircularProgressIndicator(color: DzColors.lime));
 
-    // « Exposé » = à l'hôtel + dans des valises de missions NON clôturées :
-    // tant que la mission n'est pas clôturée, le gain n'est pas encaissé et la
-    // perte reste possible. Épuisé = plus rien en jeu (tout livré).
     final actifs = _lignes!.where((l) => _n(l['expose']) > 0).toList();
     var visibles = [...(_voirEpuises ? _lignes! : actifs)];
-    // Filtres : chambre + statut (à l'hôtel / en valise).
+
     if (_filtreChambre != null) {
       visibles = visibles.where((l) => l['chambre_id'] == _filtreChambre).toList();
     }
@@ -95,14 +90,12 @@ class _InventaireScreenState extends State<InventaireScreen> {
       body: RefreshIndicator(
         color: DzColors.lime, onRefresh: _load,
         child: ListView(padding: const EdgeInsets.fromLTRB(16, 12, 16, 90), children: [
-          // ---- Seuil de collecte du séjour : ce que les valises ouvertes doivent
-          //      encore couvrir ÷ leurs kilos libres. Baisse quand on collecte bien. ----
+
           _seuilCard(),
           const SizedBox(height: 12),
-          // ---- Fin de séjour : ce qui reste à l'hôtel doit être rendu ou réparti
-          //      AVANT le premier retour d'un admin. ----
+
           ..._alerteRetour(kgHotel),
-          // KPIs
+
           _kpis([
             ('En jeu', '${kgTotal.toStringAsFixed(1)} kg',
                 '${kgHotel.toStringAsFixed(1)} kg à l’hôtel · ${kgValise.toStringAsFixed(1)} kg en valise · ${actifs.length} produit(s)',
@@ -115,10 +108,10 @@ class _InventaireScreenState extends State<InventaireScreen> {
                 Icons.warning_amber_outlined, DzColors.amber),
           ], wide),
           const SizedBox(height: 14),
-          // Barre outils
+
           Wrap(spacing: 8, runSpacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
             Text('${visibles.length} produit(s)', style: const TextStyle(color: DzColors.mut, fontSize: 12)),
-            // Chambre (défaut : toutes)
+
             PopupMenuButton<int?>(
               color: DzColors.card2,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -134,7 +127,7 @@ class _InventaireScreenState extends State<InventaireScreen> {
                           orElse: () => (0, 'Chambre')).$2,
                   Icons.storefront_outlined, null),
             ),
-            // Statut : dispo à l'hôtel / en valise
+
             PopupMenuButton<String>(
               initialValue: _statutFiltre, color: DzColors.card2,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -147,7 +140,7 @@ class _InventaireScreenState extends State<InventaireScreen> {
               child: _pill({'tous': 'Dispo + en valise', 'hotel': 'Dispo à l’hôtel', 'valise': 'En valise'}[_statutFiltre]!,
                   Icons.filter_list, null),
             ),
-            // Tri
+
             PopupMenuButton<String>(
               initialValue: _tri, color: DzColors.card2,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -194,7 +187,7 @@ class _InventaireScreenState extends State<InventaireScreen> {
     if (s == null || _ouvertes.isEmpty) {
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(color: DzColors.card, borderRadius: BorderRadius.circular(16), border: Border.all(color: DzColors.line)),
+        decoration: BoxDecoration(color: DzColors.card, borderRadius: BorderRadius.circular(16)),
         child: const Row(children: [
           Icon(Icons.speed_outlined, size: 16, color: DzColors.mut), SizedBox(width: 10),
           Expanded(child: Text('Aucune valise ouverte — le seuil de collecte s’affichera dès qu’une mission est en cours.',
@@ -244,8 +237,7 @@ class _InventaireScreenState extends State<InventaireScreen> {
   Widget _kpis(List<(String, String, String, IconData, Color)> data, bool wide) {
     Widget k((String, String, String, IconData, Color) d) => Container(
           padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-          decoration: BoxDecoration(color: DzColors.card, borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: DzColors.line)),
+          decoration: BoxDecoration(color: DzColors.card, borderRadius: BorderRadius.circular(18)),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
               Container(width: 28, height: 28, alignment: Alignment.center,
@@ -273,7 +265,7 @@ class _InventaireScreenState extends State<InventaireScreen> {
         onTap: onTap, borderRadius: BorderRadius.circular(99),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-          decoration: BoxDecoration(color: DzColors.card, border: Border.all(color: DzColors.line),
+          decoration: BoxDecoration(color: DzColors.card,
               borderRadius: BorderRadius.circular(99)),
           child: Row(mainAxisSize: MainAxisSize.min, children: [
             Icon(ic, size: 14, color: DzColors.mut), const SizedBox(width: 6),
@@ -282,7 +274,6 @@ class _InventaireScreenState extends State<InventaireScreen> {
         ),
       );
 
-  /// Chambres présentes dans le stock (pour le filtre).
   List<(int, String)> _chambresDuStock() {
     final map = <int, String>{};
     for (final l in _lignes!) {
@@ -294,7 +285,6 @@ class _InventaireScreenState extends State<InventaireScreen> {
     return list;
   }
 
-  /// Bandeau fin de séjour : stock encore à l'hôtel + retour d'un admin qui approche.
   List<Widget> _alerteRetour(double kgHotel) {
     if (kgHotel <= 0 || _ouvertes.isEmpty) return const [];
     DateTime? premier;
@@ -328,7 +318,6 @@ class _InventaireScreenState extends State<InventaireScreen> {
     ];
   }
 
-  /// Rendre des pièces à leur chambre — enregistré automatiquement (historique conservé).
   Future<void> _rendreChambre(Map l) async {
     final restant = _n(l['restant']);
     final qte = TextEditingController(text: restant.toStringAsFixed(0));
@@ -385,15 +374,12 @@ class _InventaireScreenState extends State<InventaireScreen> {
     );
   }
 
-  /// Même produit venu de plusieurs chambres → prix/manque/qualité différents :
-  /// on le signale pour ne jamais confondre les lots.
   int _nbSources(Map l) {
     final nom = '${l['produit']}'.trim().toLowerCase();
     return _lignes!.where((x) => '${x['produit']}'.trim().toLowerCase() == nom && _n(x['expose']) > 0)
         .map((x) => x['chambre_id']).toSet().length;
   }
 
-  /// Carte produit (grille). Photo du produit : prévue en fin de projet (V2).
   Widget _carte(Map l) {
     final restant = _n(l['restant']);
     final enCours = _n(l['en_cours']);
@@ -414,7 +400,6 @@ class _InventaireScreenState extends State<InventaireScreen> {
           child: Container(
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: DzColors.line),
             ),
             padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -444,8 +429,7 @@ class _InventaireScreenState extends State<InventaireScreen> {
               Wrap(spacing: 6, runSpacing: 4, children: [
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                  decoration: BoxDecoration(color: DzColors.card2, borderRadius: BorderRadius.circular(99),
-                      border: Border.all(color: DzColors.line)),
+                  decoration: BoxDecoration(color: DzColors.card2, borderRadius: BorderRadius.circular(99)),
                   child: Text('${l['chambre_nom']}', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700)),
                 ),
                 if (sources > 1)
@@ -457,7 +441,7 @@ class _InventaireScreenState extends State<InventaireScreen> {
                 Text(dateFr(l['bon_date']), style: const TextStyle(color: DzColors.mut, fontSize: 10)),
               ]),
               const SizedBox(height: 8),
-              // Manque ¥ → \$ au cours croisé OFFICIEL du jour (USD/CNY, ex. 1 \$ = 7,18 ¥).
+
               Text('${_n(l['poids_unit']).toStringAsFixed(2)} kg/pc · '
                   '${l['mode'] == 'kg' ? '${_f(_n(l['prix']))} DA/kg' : '${_f(_n(l['prix']))} DA/pc'}\n'
                   'manque ${_f(_n(l['manque_rmb']))} ¥/pc'
@@ -492,7 +476,6 @@ class _InventaireScreenState extends State<InventaireScreen> {
     );
   }
 
-  /// Traçabilité : d'où vient le lot, où sont ses pièces, qui les a descendues.
   Future<void> _voirTrace(int id) async {
     Map l;
     try { l = await Api.get('/inventaire/lignes/$id') as Map; }
@@ -524,7 +507,7 @@ class _InventaireScreenState extends State<InventaireScreen> {
                 Text('${l['produit']}', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
                 Text('Traçabilité du lot', style: const TextStyle(color: DzColors.mut, fontSize: 11.5)),
                 const SizedBox(height: 14),
-                const Text('ORIGINE', style: TextStyle(color: DzColors.mut2, fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+                const Text('ORIGINE', style: TextStyle(color: DzColors.mut, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1.2)),
                 const SizedBox(height: 4),
                 ligne('Chambre', '${l['chambre_nom']}'),
                 ligne('Dépôt en Algérie', '${l['depot_wilaya'] ?? '—'}'
@@ -536,7 +519,7 @@ class _InventaireScreenState extends State<InventaireScreen> {
                 ligne('Gain par pièce', '${_f(_n(l['gain_piece']))} DA', c: DzColors.lime),
                 ligne('Prix du manque', '${_f(_n(l['manque_rmb']))} ¥/pc', c: DzColors.amber),
                 const SizedBox(height: 14),
-                const Text('OÙ SONT LES PIÈCES', style: TextStyle(color: DzColors.mut2, fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+                const Text('OÙ SONT LES PIÈCES', style: TextStyle(color: DzColors.mut, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1.2)),
                 const SizedBox(height: 4),
                 ligne('À l’hôtel (pas encore en valise)', '${_f(restant)} pc'),
                 if (_n(l['rendu']) > 0)
@@ -554,8 +537,7 @@ class _InventaireScreenState extends State<InventaireScreen> {
                   Container(
                     margin: const EdgeInsets.only(top: 6),
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(color: DzColors.card2, borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: DzColors.line)),
+                    decoration: BoxDecoration(color: DzColors.card2, borderRadius: BorderRadius.circular(10)),
                     child: Row(children: [
                       Icon(t['statut'] == 'cloturee' ? Icons.check_circle_outline : Icons.flight_takeoff_outlined,
                           size: 16, color: t['statut'] == 'cloturee' ? DzColors.lime : DzColors.amber),
@@ -583,7 +565,6 @@ class _InventaireScreenState extends State<InventaireScreen> {
     );
   }
 
-  /* ---------- Ouvrir un bon : en PAGE (liste potentiellement longue) ---------- */
   void _ouvrirBon() {
     if (MediaQuery.of(context).size.width >= 950) {
       setState(() => _creation = true);

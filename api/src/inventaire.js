@@ -8,16 +8,13 @@ import { getReglages, coursOfficiels } from './reglages.js';
 const FONT = new URL('../fonts/NotoSansSC-Regular.otf', import.meta.url).pathname;
 const FONT_B = new URL('../fonts/NotoSansSC-Bold.otf', import.meta.url).pathname;
 
-/* Chambres (grossistes en Chine + dépôt en Algérie), bons de récupération,
-   inventaire (stock à l'hôtel) et affectations produit → valise d'une mission. */
 export const inventaireRouter = Router();
-inventaireRouter.use(requireAuth, requireRole('admin'));
+inventaireRouter.use(requireAuth, requireRole('admin', 'voyageur'));
 
 const audit = (userId, action, entite, id, details) => q(
   `INSERT INTO audit_log (user_id, action, entite, entite_id, details) VALUES ($1,$2,$3,$4,$5)`,
   [userId, action, entite, id, JSON.stringify(details)]);
 
-/* ================= SOCIÉTÉS DE FACTURATION ================= */
 const societeSchema = z.object({
   nom_cn: z.string().min(1).max(160),
   nom_en: z.string().max(160).optional().default(''),
@@ -62,7 +59,6 @@ inventaireRouter.put('/societes/:id', async (req, res) => {
   res.json(rows[0]);
 });
 
-/* ================= CHAMBRES ================= */
 const contactSchema = z.object({
   nom: z.string().min(1).max(120),
   tel: z.string().max(40).optional().default(''),
@@ -136,7 +132,7 @@ inventaireRouter.put('/chambres/:id', async (req, res) => {
     `UPDATE chambres SET nom=$1, ville=$2, depot_adresse=$3, depot_wilaya=$4, note=$5
      WHERE id=$6 RETURNING id`, [d.nom, d.ville, d.depot_adresse, d.depot_wilaya, d.note, id]);
   if (!r.rows[0]) return res.status(404).json({ error: 'Chambre introuvable.' });
-  // Contacts : on remplace la liste entière (simple et sûr).
+
   await q('DELETE FROM chambre_contacts WHERE chambre_id = $1', [id]);
   for (const k of d.contacts) {
     await q('INSERT INTO chambre_contacts (chambre_id, nom, tel, role) VALUES ($1,$2,$3,$4)',
@@ -156,7 +152,6 @@ inventaireRouter.delete('/chambres/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
-/* ================= BONS ================= */
 const ligneSchema = z.object({
   produit: z.string().min(1).max(160),
   quantite: z.coerce.number().positive(),
@@ -167,7 +162,7 @@ const ligneSchema = z.object({
 });
 const bonSchema = z.object({
   chambre_id: z.coerce.number().int(),
-  bon_id: z.coerce.number().int().optional(),   // ajouter les lignes à un bon existant
+  bon_id: z.coerce.number().int().optional(),
   date: z.string().max(10).optional(),
   note: z.string().max(1000).optional().default(''),
   lignes: z.array(ligneSchema).min(1),
@@ -179,7 +174,7 @@ inventaireRouter.post('/bons', async (req, res) => {
   const d = p.data;
   const ch = (await q('SELECT nom FROM chambres WHERE id = $1', [d.chambre_id])).rows[0];
   if (!ch) return res.status(404).json({ error: 'Chambre introuvable.' });
-  // Passage multiple dans la même chambre pendant le séjour : on peut AJOUTER au bon ouvert.
+
   let b;
   if (d.bon_id) {
     b = (await q('SELECT * FROM bons WHERE id = $1 AND chambre_id = $2', [d.bon_id, d.chambre_id])).rows[0];
@@ -233,19 +228,12 @@ inventaireRouter.delete('/bons/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
-/* ================= STOCK (inventaire) =================
-   Chaque ligne avec son restant (quantité − affectée), son poids/unité, son gain
-   DA/pièce et DA/kg. ?mission=ID ajoute les « concurrents » du même séjour
-   (missions en cours dont les dates se chevauchent) pour la suggestion équitable. */
 const gainPiece = (l) => l.mode === 'kg'
   ? Number(l.prix) * Number(l.poids_total) / Number(l.quantite)
   : Number(l.prix);
 
 async function stockLignes() {
-  // affecte  = pièces dans des valises (toutes missions)
-  // en_cours = valises de missions NON clôturées → encore exposées
-  // livre    = missions clôturées (dépôt payé)
-  // rendu    = pièces rendues à la chambre (fin de séjour) — sorties du stock
+
   const { rows } = await q(`
     SELECT l.*, b.date AS bon_date, b.chambre_id, c.nom AS chambre_nom,
            COALESCE((SELECT SUM(a.quantite) FROM affectations a WHERE a.ligne_id = l.id),0) AS affecte,
@@ -265,7 +253,7 @@ async function stockLignes() {
     const gp = gainPiece(l);
     return {
       ...l,
-      restant,                        // à l'hôtel, ni en valise ni rendue
+      restant,
       en_cours: enCours,
       livre: Number(l.livre),
       rendu: Number(l.rendu),
@@ -281,13 +269,9 @@ async function stockLignes() {
   });
 }
 
-// Missions « ouvertes » (en cours, valise pas complète) avec ce qu'il leur reste à
-// couvrir (dépenses + objectif − revenu en valise) et leurs kilos libres.
-// Filtre optionnel : chevauchement de dates avec [dep, ret] (même séjour), hors excludeId.
 async function missionsOuvertes({ excludeId = 0, dep = null, ret = null } = {}) {
   const params = [excludeId];
-  // « Ouverte » = encore en train de collecter : valise pas complète, OU bagage à
-  // main activé pas encore complet.
+
   let where = `m.id <> $1 AND m.statut = 'encours'
     AND (m.valise_close = FALSE OR (m.bagage_main AND m.bagage_main_close = FALSE))`;
   if (dep && ret) {
@@ -314,21 +298,21 @@ async function missionsOuvertes({ excludeId = 0, dep = null, ret = null } = {}) 
       kg += Number(a.quantite) * pu;
       rev += Number(a.quantite) * gainPiece(a);
     }
-    // Frais approximatifs (poche prévisionnelle, sans taxes carte) — suffisant pour le seuil.
+
     const frais = Number(m.billet) + Number(m.dem_cout) + Number(m.frais_visa || 0) +
       Number(m.jours) * Number(m.budget_jour) + Number(m.douane) + Number(m.autres) +
       Number(m.manques_da || 0) + Number(m.saisie_da || 0) +
       (m.valise_sup ? Number(m.valise_sup_prix || 0) : 0);
-    // Capacité = soute + 3e valise achetée + bagage à main (kg saisis, défaut 8).
+
     const cap = Number(m.kg_soute) + (m.valise_sup ? Number(m.valise_sup_kg || 23) : 0) +
       (m.bagage_main ? Number(m.bagage_main_kg || 8) : 0);
     const aCouvrir = Math.max(0, frais + Number(m.objectif) - rev);
     const kgLibre = Math.max(0, cap - kg);
     out.push({
       mission_id: m.id, code: m.code, voyageur: m.voyageur, depart: m.depart, retour: m.retour,
-      manque_da: aCouvrir, kg_dispo: kgLibre,              // (noms historiques utilisés par le sélecteur)
+      manque_da: aCouvrir, kg_dispo: kgLibre,
       a_couvrir: aCouvrir, kg_libre: kgLibre,
-      seuil_kg: kgLibre > 0 ? aCouvrir / kgLibre : 0,      // prix min restant de CE voyageur
+      seuil_kg: kgLibre > 0 ? aCouvrir / kgLibre : 0,
     });
   }
   return out;
@@ -337,8 +321,7 @@ async function missionsOuvertes({ excludeId = 0, dep = null, ret = null } = {}) 
 inventaireRouter.get('/stock', async (req, res) => {
   const lignes = await stockLignes();
   const reglages = await getReglages();
-  // Cours croisé USD/CNY du jour (API officielle, cache 12 h) : manque ¥ → $.
-  // Si l'API est injoignable (Chine…), repli sur taux_rmb/taux_officiel des réglages.
+
   let usdCny = 0;
   try { usdCny = (await coursOfficiels()).cny; } catch { usdCny = 0; }
   if (!usdCny && Number(reglages.taux_rmb) > 0) {
@@ -352,7 +335,7 @@ inventaireRouter.get('/stock', async (req, res) => {
     const me = (await q('SELECT depart, retour FROM missions WHERE id = $1', [mid])).rows[0];
     if (me) out.concurrents = await missionsOuvertes({ excludeId: mid, dep: me.depart, ret: me.retour });
   } else {
-    // Vue Inventaire : toutes les missions ouvertes → seuil de collecte du séjour.
+
     out.ouvertes = await missionsOuvertes();
     const aCouvrir = out.ouvertes.reduce((s, m) => s + m.a_couvrir, 0);
     const kgLibre = out.ouvertes.reduce((s, m) => s + m.kg_libre, 0);
@@ -362,9 +345,6 @@ inventaireRouter.get('/stock', async (req, res) => {
   res.json(out);
 });
 
-/* ================= RETOURS aux chambres =================
-   Fin de séjour : ce qui reste à l'hôtel se rend à sa chambre — enregistré
-   automatiquement, le stock diminue, l'historique reste (bon final = récup − rendu). */
 inventaireRouter.post('/retours', async (req, res) => {
   const p = z.object({
     ligne_id: z.coerce.number().int(),
@@ -393,11 +373,6 @@ inventaireRouter.post('/retours', async (req, res) => {
   res.status(201).json(rows[0]);
 });
 
-/* ================= PDF d'un bon de récupération =================
-   Titre centré + note du bon en sous-titre. Sur le trait : admin (avec son
-   téléphone) à gauche, date à droite. Dessous : chambre à gauche, dépôt en
-   Algérie à droite. Tableau aligné : Produit · Qté · Poids · Manque ¥ · Prix
-   · Total. Pas de « Dzair Shipping », pas de signatures. */
 inventaireRouter.get('/bons/:id/pdf', async (req, res) => {
   const id = Number(req.params.id);
   const b = (await q(
@@ -420,7 +395,6 @@ inventaireRouter.get('/bons/:id/pdf', async (req, res) => {
   doc.pipe(res);
   const L = 46, R = doc.page.width - 46, CW = R - L;
 
-  // Titre centré + note du bon en sous-titre.
   doc.font(FONT_B).fontSize(17).fillColor('#000')
     .text('BON DE RÉCUPÉRATION', L, 50, { width: CW, align: 'center' });
   if (b.note) {
@@ -429,7 +403,6 @@ inventaireRouter.get('/bons/:id/pdf', async (req, res) => {
   }
   doc.moveDown(0.9);
 
-  // Sur le trait : admin (+ téléphone) à gauche, date à droite.
   const yMeta = doc.y;
   doc.font(FONT).fontSize(9.5).fillColor('#333')
     .text(b.admin ? `Récupéré par ${b.admin}${b.admin_tel ? ' · ' + b.admin_tel : ''}` : ' ',
@@ -438,7 +411,6 @@ inventaireRouter.get('/bons/:id/pdf', async (req, res) => {
   const yLine = yMeta + 15;
   doc.moveTo(L, yLine).lineTo(R, yLine).lineWidth(1).strokeColor('#000').stroke();
 
-  // Sous le trait : chambre à gauche, dépôt en Algérie à droite.
   const chine = contacts.filter((k) => (k.role || '').toLowerCase() === 'chine');
   const alg = contacts.filter((k) => (k.role || '').toLowerCase() !== 'chine');
   const yTop = yLine + 10;
@@ -454,8 +426,6 @@ inventaireRouter.get('/bons/:id/pdf', async (req, res) => {
     .text(alg.length ? `Contact : ${alg.map((k) => `${k.nom}${k.tel ? ' ' + k.tel : ''}`).join(' · ')}` : ' ',
       L + CW / 2, doc.y, { width: CW / 2 });
 
-  // Tableau — Produit · Qté · Poids · Manque ¥ · Prix · Total, en-têtes ALIGNÉS
-  // sur les valeurs (chiffres à droite).
   let y = Math.max(yFinG, doc.y) + 14;
   const cols = [CW - 305, 40, 55, 55, 75, 80];
   const xs = [L]; for (let i = 0; i < cols.length - 1; i++) xs.push(xs[i] + cols[i]);
@@ -492,9 +462,6 @@ inventaireRouter.get('/bons/:id/pdf', async (req, res) => {
   doc.end();
 });
 
-/* ================= TRAÇABILITÉ d'une ligne =================
-   D'où vient chaque pièce (chambre, bon, prix, manque) et qui l'a descendue
-   (voyageur, mission, statut, pièces, manquants). */
 inventaireRouter.get('/lignes/:id', async (req, res) => {
   const id = Number(req.params.id);
   const l = (await q(
@@ -518,22 +485,21 @@ inventaireRouter.get('/lignes/:id', async (req, res) => {
     restant: Number(l.quantite) - affecte - rendu, rendu, retours, traces });
 });
 
-/* ================= AFFECTATIONS (produit → valise) ================= */
 inventaireRouter.post('/affectations', async (req, res) => {
   const p = z.object({
     mission_id: z.coerce.number().int(),
     ligne_id: z.coerce.number().int(),
     quantite: z.coerce.number().positive(),
-    // soute : déclaré/facturé — main : bagage à main 8 kg, JAMAIS déclaré ni facturé.
+
     emplacement: z.enum(['soute', 'main']).optional().default('soute'),
-    prix_declare: z.coerce.number().positive().optional(), // USD / pièce — requis en soute
+    prix_declare: z.coerce.number().positive().optional(),
   }).safeParse(req.body);
   if (!p.success) return res.status(400).json({ error: 'Affectation invalide.' });
   const d = p.data;
   if (d.emplacement === 'soute' && !(Number(d.prix_declare) > 0)) {
     return res.status(400).json({ error: 'Prix déclaré requis pour un produit en soute.' });
   }
-  if (d.emplacement === 'main') d.prix_declare = undefined; // jamais déclaré
+  if (d.emplacement === 'main') d.prix_declare = undefined;
   const m = (await q(
     `SELECT m.statut, m.valise_close, m.code, v.nom AS voyageur
      FROM missions m JOIN voyageurs v ON v.id = m.voyageur_id WHERE m.id = $1`, [d.mission_id])).rows[0];
@@ -551,8 +517,7 @@ inventaireRouter.post('/affectations', async (req, res) => {
   if (d.quantite > restant + 1e-9) {
     return res.status(409).json({ error: `Il ne reste que ${restant} pièce(s) en stock.` });
   }
-  // Une affectation existante pour la même ligne/mission/emplacement → on cumule,
-  // SAUF si elle est déjà facturée (une facture = un paiement) : nouvelle ligne.
+
   const ex = (await q(
     `SELECT a.id FROM affectations a WHERE a.ligne_id = $1 AND a.mission_id = $2
        AND a.emplacement = $3
@@ -566,7 +531,7 @@ inventaireRouter.post('/affectations', async (req, res) => {
         `INSERT INTO affectations (ligne_id, mission_id, quantite, prix_declare, emplacement)
          VALUES ($1,$2,$3,$4,$5) RETURNING *`,
         [d.ligne_id, d.mission_id, d.quantite, d.prix_declare ?? null, d.emplacement])).rows[0];
-  // Mémoire : dernier prix déclaré pour ce lot (pré-rempli la prochaine fois) — soute seulement.
+
   if (d.emplacement === 'soute') {
     await q('UPDATE bon_lignes SET prix_declare = $1 WHERE id = $2', [d.prix_declare, d.ligne_id]);
   }
@@ -589,21 +554,17 @@ inventaireRouter.delete('/affectations/:id', async (req, res) => {
   if (a.statut === 'cloturee' || a.valise_close) {
     return res.status(409).json({ error: 'Valise clôturée — rouvre-la d’abord.' });
   }
-  // Produit déjà sur une facture émise → verrouillé (annule la facture d'abord).
+
   const fac = (await q(
     `SELECT numero FROM factures WHERE mission_id = $1 AND statut = 'emise'
        AND lignes @> $2::jsonb LIMIT 1`, [a.mission_id, JSON.stringify([{ affectation_id: id }])])).rows[0];
   if (fac) return res.status(409).json({ error: `Produit déjà sur la facture n° ${fac.numero} — annule la facture d’abord.` });
-  await q('DELETE FROM affectations WHERE id = $1', [id]); // retour en stock
+  await q('DELETE FROM affectations WHERE id = $1', [id]);
   await audit(req.user.sub, 'valise_retrait', 'mission', a.mission_id,
     { code: a.code, produit: a.produit, quantite: Number(a.quantite) });
   res.json({ ok: true });
 });
 
-/* ================= RAPPORT DÉPÔTS =================
-   Ce que chaque dépôt (chambre) doit payer pour une mission : lignes livrées,
-   manquants/saisis remboursés, statut de remise (à vérifier → vérifié → déposé
-   → payé) et encaissements du dépôt. */
 async function rapportDepots(missionId) {
   const { rows } = await q(`
     SELECT c.id AS chambre_id, c.nom AS chambre, c.depot_adresse, c.depot_wilaya,
@@ -623,8 +584,7 @@ async function rapportDepots(missionId) {
     .rows.map((p) => [p.chambre_id, Number(p.t)]));
   const parDepot = {};
   for (const r of rows) {
-    // Livré = pièces − manquants − saisis par la douane (les deux sont remboursés
-    // à la chambre au prix du manque, via les dépenses de la mission).
+
     const livre = Number(r.quantite) - Number(r.manquants) - Number(r.saisis || 0);
     const gp = gainPiece(r);
     const d = parDepot[r.chambre_id] ??= {
@@ -648,7 +608,6 @@ inventaireRouter.get('/depots/:missionId', async (req, res) => {
   res.json(await rapportDepots(Number(req.params.missionId)));
 });
 
-/* Statut de remise d'un dépôt : à vérifier → vérifié → déposé → payé — tracé. */
 inventaireRouter.post('/depots/:missionId/statut', async (req, res) => {
   const p = z.object({
     chambre_id: z.coerce.number().int(),
@@ -670,11 +629,6 @@ inventaireRouter.post('/depots/:missionId/statut', async (req, res) => {
   res.json({ ok: true });
 });
 
-/* Bon de remise PDF d'un dépôt — même gabarit que le bon de récupération :
-   titre centré, note(s) du/des bons de récupération en sous-titre, admin (+ tél)
-   à gauche du trait / date de récupération à droite, chambre à gauche / dépôt à
-   droite, tableau Produit · Qté · Poids · Prix · Total. Pas de « Dzair
-   Shipping », pas de numéro de mission, pas de signatures. */
 inventaireRouter.get('/depots/:missionId/pdf/:chambreId', async (req, res) => {
   const missionId = Number(req.params.missionId), chambreId = Number(req.params.chambreId);
   const m = (await q('SELECT code FROM missions WHERE id = $1', [missionId])).rows[0];
@@ -686,7 +640,7 @@ inventaireRouter.get('/depots/:missionId/pdf/:chambreId', async (req, res) => {
     `SELECT * FROM chambre_contacts WHERE chambre_id = $1 ORDER BY id`, [chambreId])).rows;
   const chine = contacts.filter((k) => (k.role || '').toLowerCase() === 'chine');
   const alg = contacts.filter((k) => (k.role || '').toLowerCase() !== 'chine');
-  // Bons de récupération concernés : note(s) en sous-titre, admin + date du dernier.
+
   const bons = (await q(
     `SELECT DISTINCT b.id, b.date, b.note, u.nom AS admin, u.tel AS admin_tel
      FROM affectations a
@@ -706,7 +660,6 @@ inventaireRouter.get('/depots/:missionId/pdf/:chambreId', async (req, res) => {
   doc.pipe(res);
   const L = 46, R = doc.page.width - 46, CW = R - L;
 
-  // Titre centré + note(s) du bon de récupération en sous-titre.
   doc.font(FONT_B).fontSize(17).fillColor('#000')
     .text('BON DE REMISE', L, 50, { width: CW, align: 'center' });
   if (notes) {
@@ -715,7 +668,6 @@ inventaireRouter.get('/depots/:missionId/pdf/:chambreId', async (req, res) => {
   }
   doc.moveDown(0.9);
 
-  // Sur le trait : admin qui a récupéré (+ téléphone) à gauche, date de récup à droite.
   const yMeta = doc.y;
   doc.font(FONT).fontSize(9.5).fillColor('#333')
     .text(dernier?.admin ? `Récupéré par ${dernier.admin}${dernier.admin_tel ? ' · ' + dernier.admin_tel : ''}` : ' ',
@@ -725,7 +677,6 @@ inventaireRouter.get('/depots/:missionId/pdf/:chambreId', async (req, res) => {
   const yLine = yMeta + 15;
   doc.moveTo(L, yLine).lineTo(R, yLine).lineWidth(1).strokeColor('#000').stroke();
 
-  // Sous le trait : chambre à gauche, dépôt à droite.
   const yTop = yLine + 10;
   doc.fillColor('#000').font(FONT_B).fontSize(11)
     .text(`Chambre ${ch?.nom ?? dep.chambre}`, L, yTop, { width: CW / 2 - 10 });
@@ -741,7 +692,6 @@ inventaireRouter.get('/depots/:missionId/pdf/:chambreId', async (req, res) => {
     .text(alg.length ? `Contact : ${alg.map((k) => `${k.nom}${k.tel ? ' ' + k.tel : ''}`).join(' · ')}` : ' ',
       L + CW / 2, doc.y, { width: CW / 2 });
 
-  // Tableau — Produit · Qté · Poids · Prix (pièce ou kilo) · Total.
   let y = Math.max(yFinG, doc.y) + 14;
   const cols = [CW - 255, 45, 60, 70, 80];
   const xs = [L]; for (let i = 0; i < cols.length - 1; i++) xs.push(xs[i] + cols[i]);

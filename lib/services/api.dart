@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
-/// Erreur lisible renvoyée à l'interface.
 class ApiException implements Exception {
   final String message;
   ApiException(this.message);
@@ -9,10 +8,6 @@ class ApiException implements Exception {
   String toString() => message;
 }
 
-/// Client HTTP de l'API Dzair Shipping.
-/// En dev : l'API tourne via `docker compose up -d` sur localhost:3000.
-/// En prod : l'URL est injectée au build —
-///   flutter build web --dart-define=API_URL=https://…/api
 class Api {
   static const baseUrl = String.fromEnvironment(
     'API_URL',
@@ -20,7 +15,7 @@ class Api {
   );
 
   static String? _token;
-  static String? role; // 'admin' | 'voyageur' | 'client'
+  static String? role;
   static String? nom;
   static bool get connecte => _token != null;
 
@@ -46,7 +41,6 @@ class Api {
       _send('PUT', path, body: body);
   static Future<dynamic> delete(String path) => _send('DELETE', path);
 
-  /// Téléchargement binaire (PDF…) — renvoie les octets.
   static Future<List<int>> getBytes(String path) async {
     final uri = Uri.parse('$baseUrl$path');
     http.Response r;

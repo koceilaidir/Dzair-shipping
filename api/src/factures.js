@@ -4,10 +4,8 @@ import PDFDocument from 'pdfkit';
 import { q } from './db.js';
 import { requireAuth, requireRole } from './auth.js';
 
-/* Factures des valises — émises au nom de la société de facturation, tout en
-   chinois sauf les noms de produits (anglais). Figées à la génération. */
 export const facturesRouter = Router();
-facturesRouter.use(requireAuth, requireRole('admin'));
+facturesRouter.use(requireAuth, requireRole('admin', 'voyageur'));
 
 const FONT = new URL('../fonts/NotoSansSC-Regular.otf', import.meta.url).pathname;
 const FONT_B = new URL('../fonts/NotoSansSC-Bold.otf', import.meta.url).pathname;
@@ -16,21 +14,19 @@ const audit = (userId, action, entite, id, details) => q(
   `INSERT INTO audit_log (user_id, action, entite, entite_id, details) VALUES ($1,$2,$3,$4,$5)`,
   [userId, action, entite, id, JSON.stringify(details)]);
 
-/* ---------- Helpers ---------- */
 const dateCn = (d) => {
   const s = new Date(d).toISOString().slice(0, 10);
   return `${s.slice(0, 4)}年${s.slice(5, 7)}月${s.slice(8, 10)}日`;
 };
 const money = (n) => Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-// Montant en toutes lettres (大写) pour des dollars US : 壹仟肆佰捌拾贰美元整
 const CN_DIG = '零壹贰叁肆伍陆柒捌玖';
 function daxie(n) {
   const yuan = Math.floor(n + 1e-9);
   const cents = Math.round((n - yuan) * 100);
   const units = ['', '拾', '佰', '仟'];
   const big = ['', '万', '亿'];
-  const seg = (v) => { // 0-9999 → 大写
+  const seg = (v) => {
     let s = '', zero = false;
     for (let i = 3; i >= 0; i--) {
       const d = Math.floor(v / 10 ** i) % 10;
@@ -59,7 +55,6 @@ async function factureComplete(id) {
      WHERE f.id = $1`, [id])).rows[0];
 }
 
-/* ---------- Liste par mission ---------- */
 facturesRouter.get('/', async (req, res) => {
   const mid = Number(req.query.mission);
   if (!mid) return res.status(400).json({ error: 'mission requise.' });
@@ -68,8 +63,6 @@ facturesRouter.get('/', async (req, res) => {
   res.json(rows);
 });
 
-/* ---------- Génération : un groupe = une facture ----------
-   body : { mission_id, taux_rmb, groupes: [{ affectation_ids: [..], date?: 'YYYY-MM-DD' }] } */
 facturesRouter.post('/generer', async (req, res) => {
   const p = z.object({
     mission_id: z.coerce.number().int(),
@@ -91,8 +84,6 @@ facturesRouter.post('/generer', async (req, res) => {
     'SELECT * FROM societes_facturation ORDER BY par_defaut DESC, id LIMIT 1')).rows[0];
   if (!soc) return res.status(409).json({ error: 'Renseigne d’abord la société de facturation (Réglages).' });
 
-  // Affectations SOUTE de la mission (avec prix déclaré) — le bagage à main n'est
-  // JAMAIS facturé ni déclaré ; chaque groupe doit en prendre.
   const aff = (await q(
     `SELECT a.id, a.quantite, a.prix_declare, l.produit
      FROM affectations a JOIN bon_lignes l ON l.id = a.ligne_id
@@ -102,7 +93,6 @@ facturesRouter.post('/generer', async (req, res) => {
     `SELECT jsonb_array_elements(lignes)->>'affectation_id' AS aid FROM factures
      WHERE mission_id = $1 AND statut = 'emise'`, [d.mission_id])).rows.map((r) => Number(r.aid)));
 
-  // Dates : une différente par facture, entre le départ et la veille du retour.
   const dep = m.depart ? new Date(m.depart) : new Date();
   const ret = m.retour ? new Date(m.retour) : new Date(dep.getTime() + 5 * 86400000);
   const span = Math.max(1, Math.round((ret - dep) / 86400000) - 1);
@@ -139,7 +129,7 @@ facturesRouter.post('/generer', async (req, res) => {
     }
     const total = Math.round(lignes.reduce((s, l) => s + l.montant, 0) * 100) / 100;
     const totalRmb = Math.round(total * d.taux_rmb * 100) / 100;
-    const numero = Math.floor(Math.random() * 31); // 0..30
+    const numero = Math.floor(Math.random() * 31);
     const date = g.date || dateAuto(gi, d.groupes.length);
     const { rows } = await q(
       `INSERT INTO factures (mission_id, societe_id, numero, date, client_nom, client_tel, client_adresse,
@@ -154,7 +144,6 @@ facturesRouter.post('/generer', async (req, res) => {
   res.status(201).json(created);
 });
 
-/* ---------- Annuler (mission non clôturée) ---------- */
 facturesRouter.delete('/:id', async (req, res) => {
   const f = await factureComplete(Number(req.params.id));
   if (!f) return res.status(404).json({ error: 'Facture introuvable.' });
@@ -165,7 +154,6 @@ facturesRouter.delete('/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
-/* ---------- PDF ---------- */
 function dessiner(doc, f) {
   const soc = f.societe || {};
   const W = doc.page.width, L = 50, R = W - 50, CW = R - L;
@@ -179,7 +167,6 @@ function dessiner(doc, f) {
   doc.font(FONT_B).fontSize(16).text('销 售 发 票', { width: CW, align: 'center' });
   doc.moveDown(0.8);
 
-  // Bloc infos
   doc.font(FONT).fontSize(10.5);
   let y = doc.y;
   const col2 = L + CW / 2;
@@ -189,7 +176,6 @@ function dessiner(doc, f) {
   doc.text(`客户地址：${f.client_adresse || '—'}`, L, y, { width: CW }); y = doc.y + 3;
   doc.text('币种：美元 (USD)', L, y); y += 22;
 
-  // Tableau
   const cols = [34, CW - 34 - 60 - 90 - 100, 60, 90, 100];
   const xs = [L]; for (let i = 0; i < cols.length - 1; i++) xs.push(xs[i] + cols[i]);
   const heads = ['序号', '产品名称', '数量', '单价 (USD)', '金额 (USD)'];
@@ -215,14 +201,12 @@ function dessiner(doc, f) {
   gridRow(y); cell(1, '合计', y, true); cell(2, String(qteTot), y, true, 'center'); cell(4, money(f.total), y, true, 'right'); y += rowH;
   doc.moveTo(L, y).lineTo(R, y).stroke();
 
-  // Totaux
   y += 12;
   doc.font(FONT).fontSize(10.5)
     .text(`合计金额（大写）：${daxie(Number(f.total))}    （小写）：USD ${money(f.total)}`, L, y, { width: CW });
   y = doc.y + 4;
   doc.text(`汇率：1 USD = ${Number(f.taux_rmb).toFixed(2)} RMB    合计（人民币）：RMB ${money(f.total_rmb)}`, L, y, { width: CW });
 
-  // Signature
   y = doc.y + 40;
   doc.text(`收款单位（盖章）：${soc.nom_cn || ''}`, L, y);
   doc.text('开票人：', R - 120, y);

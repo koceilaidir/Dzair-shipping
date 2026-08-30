@@ -4,8 +4,6 @@ import '../theme.dart';
 import '../widgets/date_field.dart';
 import 'mission_detail_screen.dart';
 
-/// Missions — liste + création (vol → multi-voyageurs).
-/// Sur PC/tablette, le détail s'ouvre DANS la zone de contenu (la sidebar reste visible).
 class MissionsScreen extends StatefulWidget {
   const MissionsScreen({super.key});
 
@@ -16,8 +14,8 @@ class MissionsScreen extends StatefulWidget {
 class _MissionsScreenState extends State<MissionsScreen> {
   List<dynamic>? _list;
   String? _error;
-  int? _selectedId; // maître-détail (écrans larges)
-  String _sort = 'recent'; // recent | retour | depart
+  int? _selectedId;
+  String _sort = 'recent';
 
   static const _sorts = {
     'recent': 'Dernières ajoutées',
@@ -28,7 +26,7 @@ class _MissionsScreenState extends State<MissionsScreen> {
   List<dynamic> get _sorted {
     final l = [..._list!];
     switch (_sort) {
-      case 'retour': // celles qui vont bientôt clôturer d'abord, clôturées à la fin
+      case 'retour':
         l.sort((a, b) {
           final ca = a['statut'] == 'cloturee' ? 1 : 0;
           final cb = b['statut'] == 'cloturee' ? 1 : 0;
@@ -37,7 +35,7 @@ class _MissionsScreenState extends State<MissionsScreen> {
         });
       case 'depart':
         l.sort((a, b) => '${b['depart'] ?? ''}'.compareTo('${a['depart'] ?? ''}'));
-      default: // dernières créées en premier
+      default:
         l.sort((a, b) => (b['id'] as int).compareTo(a['id'] as int));
     }
     return l;
@@ -60,12 +58,11 @@ class _MissionsScreenState extends State<MissionsScreen> {
   }
 
   num _nn(Map m, String k) => num.tryParse('${m[k] ?? 0}') ?? 0;
-  // Même formule que le serveur : poche réelle (tranches) sinon jours × budget,
-  // + taxes de carte (fournies par l'API). La marchandise n'est pas une dépense.
+
   num _frais(Map m) {
     final poche = _nn(m, 'poche_da') > 0
         ? _nn(m, 'poche_da') : _nn(m, 'jours') * _nn(m, 'budget_jour');
-    final pocheNette = poche - _nn(m, 'reste_da'); // restes rendus au retour
+    final pocheNette = poche - _nn(m, 'reste_da');
     return _nn(m, 'billet') + _nn(m, 'dem_cout') + _nn(m, 'frais_visa') +
         (pocheNette > 0 ? pocheNette : 0) +
         _nn(m, 'douane') + _nn(m, 'taxes_carte') + _nn(m, 'autres') + _nn(m, 'manques_da') +
@@ -95,7 +92,7 @@ class _MissionsScreenState extends State<MissionsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Détail intégré : la sidebar du shell reste en place.
+
     if (_selectedId != null && MediaQuery.of(context).size.width >= 950) {
       return MissionDetailScreen(
         id: _selectedId!,
@@ -174,7 +171,6 @@ class _MissionsScreenState extends State<MissionsScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
               decoration: BoxDecoration(
                   color: DzColors.card,
-                  border: Border.all(color: DzColors.line),
                   borderRadius: BorderRadius.circular(99)),
               child: Row(mainAxisSize: MainAxisSize.min, children: [
                 const Icon(Icons.swap_vert, size: 14, color: DzColors.mut),
@@ -196,11 +192,12 @@ class _MissionsScreenState extends State<MissionsScreen> {
         onTap: () => _open(m['id'] as int),
         contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
         leading: Container(
-          width: 40, height: 40, alignment: Alignment.center,
-          decoration: BoxDecoration(
-              color: col.withValues(alpha: .12),
-              borderRadius: BorderRadius.circular(11)),
-          child: Icon(closed ? Icons.check : Icons.flight_takeoff, color: col, size: 19),
+          width: 38, height: 38, alignment: Alignment.center,
+          decoration: const BoxDecoration(
+              color: DzColors.card2, shape: BoxShape.circle),
+          child: Text('${m['voyageur_nom'] ?? '?'}'.characters.first.toUpperCase(),
+              style: const TextStyle(color: DzColors.txt2, fontSize: 13.5,
+                  fontWeight: FontWeight.w700)),
         ),
         title: Text('${m['code']} · ${m['voyageur_nom']}',
             style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
@@ -216,22 +213,26 @@ class _MissionsScreenState extends State<MissionsScreen> {
               Text('${b >= 0 ? '+' : ''}${b.toStringAsFixed(0)} DA',
                   style: TextStyle(color: b >= 0 ? DzColors.lime : DzColors.red,
                       fontWeight: FontWeight.w700, fontSize: 12.5)),
+
             Container(
               margin: const EdgeInsets.only(top: 3),
-              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: BoxDecoration(
-                  color: col.withValues(alpha: .13),
+                  color: DzColors.card2,
                   borderRadius: BorderRadius.circular(99)),
-              child: Text(label,
-                  style: TextStyle(color: col, fontSize: 9.5, fontWeight: FontWeight.w700)),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Container(width: 6, height: 6,
+                    decoration: BoxDecoration(color: col, shape: BoxShape.circle)),
+                const SizedBox(width: 6),
+                Text(label.replaceAll('● ', '').replaceAll('✓ ', ''),
+                    style: TextStyle(color: col, fontSize: 10, fontWeight: FontWeight.w700)),
+              ]),
             ),
           ],
         ),
       ),
     );
   }
-
-  /* ---------------- Création ---------------- */
 
   Future<void> _openCreate() async {
     List<dynamic> voyageurs;
@@ -338,13 +339,13 @@ class _MissionsScreenState extends State<MissionsScreen> {
                   ),
                   const SizedBox(height: 20),
                   const Text('ASSIGNER LES VOYAGEURS',
-                      style: TextStyle(color: DzColors.mut2, fontSize: 10,
+                      style: TextStyle(color: DzColors.mut, fontSize: 11,
                           fontWeight: FontWeight.w700, letterSpacing: 1.2)),
                   const SizedBox(height: 4),
                   const Text('Une fiche mission sera créée pour chacun (sa valise, ses frais).',
                       style: TextStyle(color: DzColors.mut, fontSize: 11)),
                   const SizedBox(height: 8),
-                  // Indisponibles et limite atteinte : jamais suggérés (case grisée).
+
                   ...voyageurs.map((v) {
                     final id = v['id'] as int;
                     final on = selected.contains(id);

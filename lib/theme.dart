@@ -1,22 +1,18 @@
 import 'package:flutter/material.dart';
 
-/// Charte v3 « iOS sombre » — direction A validée sur maquettes (29/08/2026).
-/// Anatomie iOS : groupes #1C1C1E SANS bordures sur fond quasi noir,
-/// séparateurs fins, boutons en pilules, Plus Jakarta Sans (embarquée,
-/// China-proof). Le lime reste l'unique accent : actions + chiffres clés.
 class DzColors {
-  static const bg = Color(0xFF0A0A0B);        // fond — quasi noir (sidebar comprise)
-  static const panel = Color(0xFF0A0A0B);     // = bg (l'app est d'un seul tenant)
-  static const card = Color(0xFF1C1C1E);      // groupe iOS — jamais de bordure
-  static const card2 = Color(0xFF242428);     // champs, jauges, pastilles
-  static const line = Color(0x12FFFFFF);      // hairline (séparateurs ~7 % blanc)
-  static const lime = Color(0xFFC9F231);      // accent — actions + chiffres clés
-  static const limeDim = Color(0xFF9DC026);
+  static const bg = Color(0xFF0A0A0B);
+  static const panel = Color(0xFF0A0A0B);
+  static const card = Color(0xFF1C1C1E);
+  static const card2 = Color(0xFF242428);
+  static const line = Color(0x12FFFFFF);
+  static const lime = Color(0xFFCDFF3D);
+  static const limeDim = Color(0xFFA6D62F);
   static const inkOnLime = Color(0xFF131400);
-  static const txt = Color(0xFFFFFFFF);       // titres, valeurs
-  static const txt2 = Color(0xFFC7C7CC);      // texte secondaire
-  static const mut = Color(0xFF8E8E93);       // libellés, méta (gris iOS)
-  static const mut2 = Color(0xFF636366);      // légendes discrètes
+  static const txt = Color(0xFFFFFFFF);
+  static const txt2 = Color(0xFFC7C7CC);
+  static const mut = Color(0xFF8E8E93);
+  static const mut2 = Color(0xFF636366);
   static const red = Color(0xFFFF6B5E);
   static const amber = Color(0xFFF2C74B);
 }
@@ -39,7 +35,7 @@ ThemeData dzairTheme() {
       onSurface: DzColors.txt,
       error: DzColors.red,
     ),
-    // Groupe iOS : aucune bordure — la surface se détache du fond par son ton.
+
     cardTheme: base.cardTheme.copyWith(
       color: DzColors.card,
       elevation: 0,
@@ -63,7 +59,7 @@ ThemeData dzairTheme() {
         borderSide: const BorderSide(color: DzColors.lime, width: 1.4),
       ),
     ),
-    // Pilules : tout bouton plein est une pilule lime.
+
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
         backgroundColor: DzColors.lime,

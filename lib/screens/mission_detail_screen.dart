@@ -10,12 +10,6 @@ import '../services/download.dart';
 import '../services/upload.dart';
 import 'rapport_depots_screen.dart';
 
-/// Détail d'une mission — structure v7 :
-/// KPIs · ((Dépenses + Argent déposé BEA) ‖ Check départ) · Statut de vol ·
-/// Prix du kilo · Valise · Check retour · Clôture.
-/// La marchandise n'est JAMAIS une dépense (argent déplacé puis revendu) ;
-/// ses seules dépenses = ses taxes de déplacement : douane 5 % + IFU 0,5 %
-/// + taxes de carte au retrait (potentielles = tout le dépôt retiré).
 class MissionDetailScreen extends StatefulWidget {
   final int id;
   final bool embedded;
@@ -31,19 +25,18 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
   Map? _m;
   Map? _reglages;
   String? _error;
-  // Cartes « avant le départ » rangées (repliées) — possible dès que le check est complet.
+
   bool _avantDepartRange = false;
-  bool _rangeAuto = false; // on replie automatiquement une seule fois, au 1er chargement prêt
-  bool _formLibre = false; // formulaire « produit hors inventaire » déplié
-  bool _valiseRange = false; // carte Valise repliée (une fois complète)
-  bool? _volRange;           // carte Vol repliée (null = auto : rangée dès que le vol est passé)
-  List _factures = [];      // factures émises de la mission
+  bool _rangeAuto = false;
+  bool _formLibre = false;
+  bool _valiseRange = false;
+  bool? _volRange;
+  List _factures = [];
   final _nom = TextEditingController();
   final _kg = TextEditingController();
   final _prix = TextEditingController();
-  final _liquide = TextEditingController(); // liquide remis avec l'enveloppe douane
+  final _liquide = TextEditingController();
 
-  // Check départ = documents/argent + rappels matériels ; certains cochés automatiquement.
   static const _itemsDepart = [
     ('passeport', 'Passeport valide en poche', true),
     ('autorisations', 'Autorisations ANAE imprimées', false),
@@ -83,7 +76,7 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
         _factures = (res[2] as List?) ?? [];
         _liquide.text = _m!['liquide_remis'] == null
             ? _liquide.text : _n(_m!['liquide_remis']).toStringAsFixed(0);
-        // 1er chargement d'une fiche déjà prête → cartes avant-départ rangées d'office.
+
         if (!_rangeAuto) {
           _rangeAuto = true;
           if (_departComplet && _m!['statut'] != 'cloturee') _avantDepartRange = true;
@@ -94,40 +87,34 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     }
   }
 
-  /* ---------- Calculs — IDENTIQUES au serveur (missions.js) ---------- */
   double _n(dynamic v) => v == null ? 0 : (num.tryParse('$v') ?? 0).toDouble();
   List get _tr => (_m!['tranches'] as List?) ?? [];
   List get _trVoyage => _tr.where((t) => '${t['motif']}' == 'voyage').toList();
   List get _trPoche => _tr.where((t) => '${t['motif']}' == 'poche').toList();
-  // Restes RENDUS au retour (motif 'reste') : cash devise/DA, RMB Alipay… —
-  // l'argent qui revient à l'agence réduit la dépense de poche réelle.
+
   List get _trRestes => _tr.where((t) => '${t['motif']}' == 'reste').toList();
   double get _restesDA =>
       _trRestes.fold(0.0, (s, t) => s + _n(t['usd']) * _n(t['taux']));
   double get _perDiem => _n(_m!['jours']) * _n(_m!['budget_jour']);
-  // Argent de poche réel (tranches) — remplace la prévision jours × budget dès
-  // qu'il existe. Dépense réelle = donné − rendu, jamais négative.
+
   double get _pocheDA =>
       _trPoche.fold(0.0, (s, t) => s + _n(t['usd']) * _n(t['taux']));
   double get _poche {
     final brut = _pocheDA > 0 ? _pocheDA : _perDiem;
     return (brut - _restesDA).clamp(0, double.infinity);
   }
-  // Marchandise (motif 'voyage') : de l'argent DÉPLACÉ, jamais une dépense.
-  // Ses seules dépenses = ses taxes de déplacement (douane + taxes de carte).
+
   double get _marchandiseDA =>
       _trVoyage.fold(0.0, (s, t) => s + _n(t['usd']) * _n(t['taux']));
   double get _marchandiseDevise => _trVoyage.fold(0.0, (s, t) => s + _n(t['usd']));
-  // Lecture d'un réglage (0 si absent) — sans `?[` : ambigu pour le parseur
-  // Dart à l'intérieur d'un ternaire.
+
   double _rg(String cle) => _reglages == null ? 0 : _n(_reglages![cle]);
   double get _tauxMoyen {
     if (_marchandiseDevise > 0) return _marchandiseDA / _marchandiseDevise;
     final t = _rg('taux_officiel');
     return t > 0 ? t : 150;
   }
-  // Taux du marché PARALLÈLE (réglages) pour la devise du compte — c'est à ce taux
-  // que les taxes de carte coûtent vraiment. Repli : taux moyen des tranches.
+
   double get _tauxParallele {
     final t = _rg(_devise == 'EUR' ? 'taux_parallele_eur' : 'taux_parallele_usd');
     return t > 0 ? t : _tauxMoyen;
@@ -138,24 +125,19 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     final t = _rg('taux_officiel');
     return t > 0 ? t : 135;
   }
-  // Taxes de carte (= « frais de carte », une seule et même chose) :
-  // potentielles = si TOUT le dépôt est retiré — réelles sur factures à la clôture.
+
   double get _taxesCarte => (_facturee
           ? _n(_m!['factures_total']) : _marchandiseDevise) * _pctCarte * _tauxParallele;
-  // Base des taxes d'arrivée ($) : Σ prix DÉCLARÉS des produits en SOUTE (le
-  // bagage à main n'est jamais déclaré) dès qu'il y en a, sinon le dépôt carte.
+
   double get _declareTotal =>
       _affSoute.fold(0.0, (s, a) => s + _n(a['quantite']) * _n(a['prix_declare']));
   double get _baseDouane => _declareTotal > 0 ? _declareTotal : _marchandiseDevise;
-  // Prévision : sans prix déclarés, la base = l'argent VRAIMENT disponible du
-  // dépôt = dépôt − taxes de carte (1 000 $ → 1 000 × (1 − pct)).
+
   double get _basePrevision =>
       _declareTotal > 0 ? _declareTotal : _marchandiseDevise * (1 - _pctCarte);
-  // Taxes réellement payées aux douaniers (saisies à l'arrivée) — priment sur tout.
+
   bool get _taxesReelles => _m!['taxes_reelles'] != null;
-  // La douane ajoute-t-elle sa marge de 30 % avant l'IFU ? Choix figé sur la
-  // mission s'il existe, sinon le réglage — pour la taxe RÉELLE seulement :
-  // la PRÉVISION compte TOUJOURS la marge (« au cas où », pas de surprise).
+
   bool get _marge30 {
     final v = _m!['ifu_marge'];
     if (v == null) return _rg('ifu_marge_30') > 0;
@@ -163,29 +145,23 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
   }
   double get _kIfu =>
       _m!['statut'] == 'cloturee' && !_taxesReelles ? (_marge30 ? 1.3 : 1.0) : 1.3;
-  // Taxes à l'arrivée : réelles si saisies, figées si clôturée, sinon prévision
-  // EN DIRECT (marge 30 % toujours comptée) :
-  //   CA = base × taux officiel · douane = CA × 5 %
-  //   IFU = (CA + douane) × 1,30 × 0,5 %
+
   double get _douane => _taxesReelles
       ? _n(_m!['taxes_reelles'])
       : _m!['statut'] == 'cloturee'
           ? _n(_m!['douane'])
           : _basePrevision * _tauxOfficiel * (0.05 + 1.05 * _kIfu * 0.005);
-  // Répartition exacte du total (marche aussi pour une mission clôturée,
-  // où seul le total est stocké) : douane 5 % ∝ 0,05 · IFU ∝ 1,05 × k × 0,005.
+
   double get _taxeDouane5 => _douane * 0.05 / (0.05 + 1.05 * _kIfu * 0.005);
   double get _taxeIfu => _douane - _taxeDouane5;
-  // Valeur déclarée en douane : automatique — factures × taux officiel à la clôture,
-  // sinon estimation sur les prix déclarés (repli : dépôt carte).
+
   double get _valDeclaree => _facturee
       ? _n(_m!['val_declaree'])
       : _baseDouane * _tauxOfficiel;
   double get _frais => _n(_m!['billet']) + _n(_m!['dem_cout']) + _n(_m!['frais_visa']) +
       _poche + _douane + _taxesCarte + _n(_m!['autres']) + _n(_m!['manques_da']) +
       (_valiseSup ? _n(_m!['valise_sup_prix']) : 0) + _n(_m!['saisie_da']);
-  // Bagages : soute (2×23) + 3e valise achetée + bagage à main 8 kg (remplace
-  // l'ancienne option « cabine +10 kg »).
+
   bool get _valiseSup => _m!['valise_sup'] == true;
   bool get _bagMain => _m!['bagage_main'] == true;
   bool get _bagMainClose => _m!['bagage_main_close'] == true;
@@ -193,10 +169,9 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
   double get _bagMainKg { final k = _n(_m!['bagage_main_kg']); return k > 0 ? k : 8; }
   double get _capSoute => _n(_m!['kg_soute']) + (_valiseSup ? _valiseSupKg : 0);
   double get _cap => _capSoute + (_bagMain ? _bagMainKg : 0);
-  // Tous les bagages clos → on prépare l'enveloppe douane.
+
   bool get _tousBagagesClos => _valiseClose && (!_bagMain || _bagMainClose);
-  // Valise = produits libres + produits venus de l'inventaire (affectations).
-  // 'soute' = déclaré/facturé — 'main' = bagage à main, jamais déclaré.
+
   List get _aff => (_m!['affectations'] as List?) ?? [];
   List get _affSoute => _aff.where((a) => '${a['emplacement'] ?? 'soute'}' != 'main').toList();
   List get _affMain => _aff.where((a) => '${a['emplacement']}' == 'main').toList();
@@ -205,22 +180,19 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
   double get _usedSoute => (_m!['produits'] as List).fold(0.0, (s, p) => s + _n(p['kg'])) +
       _affSoute.fold(0.0, (s, a) => s + _n(a['quantite']) * _n(a['poids_unit']));
   double get _used => _usedSoute + _usedMain;
-  // Revenu projeté : les pièces SAISIES par la douane ne rapportent rien.
+
   double get _revenu => (_m!['produits'] as List)
       .fold(0.0, (s, p) => s + _n(p['kg']) * _n(p['prix_kg'])) +
       _aff.fold(0.0, (s, a) => s + (_n(a['quantite']) - _n(a['saisis'])) * _n(a['gain_piece']));
   double get _benef => _revenu - _frais;
   double get _obj => _n(_m!['objectif']);
-  // Le kilo couvre les dépenses (taxes de déplacement incluses) + l'objectif —
-  // JAMAIS l'argent de la marchandise lui-même.
+
   double get _pkMin => _cap > 0 ? (_frais + _obj) / _cap : 0;
-  // Prix minimum RESTANT : ce qu'il reste à couvrir ÷ kilos libres. Baisse à mesure
-  // que la valise se remplit ; 0 quand l'objectif est couvert (tout est bonus).
+
   double get _aCouvrir => (_frais + _obj - _revenu) > 0 ? (_frais + _obj - _revenu) : 0;
   double get _kgLibre => (_cap - _used) > 0 ? (_cap - _used) : 0;
   double get _pkRestant => _kgLibre > 0 ? _aCouvrir / _kgLibre : 0;
 
-  /* ---------- Étapes : ① Préparer · ② Vol aller · ③ Sur place · ④ Retour ---------- */
   bool get _volPasse {
     final d = DateTime.tryParse('${_m!['depart'] ?? ''}'.substring(0, '${_m!['depart'] ?? ''}'.length >= 10 ? 10 : 0));
     if (d == null) return false;
@@ -228,11 +200,11 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     return !DateTime(now.year, now.month, now.day).isBefore(d);
   }
   int get _etape {
-    if (_m!['statut'] == 'cloturee') return 5;         // tout fini
-    if (_valiseClose) return 4;                         // retour
-    if (_departComplet && _volPasse) return 3;          // sur place
-    if (_departComplet) return 2;                       // vol aller
-    return 1;                                           // préparer
+    if (_m!['statut'] == 'cloturee') return 5;
+    if (_valiseClose) return 4;
+    if (_departComplet && _volPasse) return 3;
+    if (_departComplet) return 2;
+    return 1;
   }
   String get _devise => '${_m!['v_devise'] ?? 'USD'}';
   double get _soldeDevises => _n(_m!['v_solde']);
@@ -240,7 +212,7 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
   String _f(num n) => n.toStringAsFixed(0).replaceAllMapped(
       RegExp(r'(\d)(?=(\d{3})+$)'), (m) => '${m[1]} ');
   String _sym(String d) => d == 'EUR' ? '€' : d == 'RMB' ? '¥' : d == 'DA' ? 'DA' : '\$';
-  // Format des montants : le total D'ABORD, la devise APRÈS (2 000 $, pas $ 2 000).
+
   String _mnt(num n, String devise) => '${_f(n)} ${_sym(devise)}';
 
   String _demLabel(dynamic t) => switch ('$t') {
@@ -250,7 +222,6 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
         _ => 'Visa multiple',
       };
 
-  /* ---------- Actions valise ---------- */
   Future<void> _addProduit() async {
     final nom = _nom.text.trim();
     final kg = num.tryParse(_kg.text);
@@ -281,17 +252,15 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     try {
       await Api.put('/missions/${widget.id}', {'valise_close': fermer});
       await _load();
-      // Valise complète = verrou de contenu. S'il reste du non-facturé, on le signale
-      // sans obliger : la facturation suit les paiements carte, pas la fermeture.
+
       if (fermer && mounted && _affNonFacturees.isNotEmpty) {
         _snack('Valise complète ✓ — ${_affNonFacturees.length} produit(s) pas encore facturé(s).');
       }
-      // Proposer d'ajouter des kilos : 3e valise achetée / bagage à main 8 kg.
+
       if (fermer && mounted && (!_valiseSup || !_bagMain)) await _proposerBagages();
     } on ApiException catch (e) { _snack(e.message); }
   }
 
-  /// Après la clôture de la valise : proposer une 3e valise et/ou le bagage à main.
   Future<void> _proposerBagages() async {
     await showDialog(
       context: context,
@@ -320,7 +289,6 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     );
   }
 
-  /// Active la 3e valise : demande son prix (DA) et son poids (défaut 23 kg).
   Future<void> _activerValiseSup() async {
     final prix = TextEditingController(
         text: _n(_m!['valise_sup_prix']) > 0 ? _f(_n(_m!['valise_sup_prix'])).replaceAll(' ', '') : '');
@@ -369,7 +337,6 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     } on ApiException catch (e) { _snack(e.message); }
   }
 
-  /// 3e valise déjà active : modifier son prix/poids, ou la retirer.
   Future<void> _valiseSupMenu() async {
     await showDialog(
       context: context,
@@ -389,7 +356,6 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     );
   }
 
-  /// Active le bagage à main : demande ses kilos (défaut 8, saisis à la main).
   Future<void> _activerBagMain() async {
     final kg = TextEditingController(text: _bagMainKg.toStringAsFixed(0));
     await showDialog(
@@ -425,7 +391,6 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     );
   }
 
-  /// Bagage à main déjà actif : modifier ses kilos, ou le retirer.
   Future<void> _bagMainMenu() async {
     await showDialog(
       context: context,
@@ -465,7 +430,6 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     } on ApiException catch (e) { _snack(e.message); }
   }
 
-  /// N° de la facture émise qui contient cette affectation (null si pas facturée).
   int? _factureDe(dynamic affId) {
     for (final f in _factures) {
       for (final l in (f['lignes'] as List? ?? [])) {
@@ -477,8 +441,6 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     return null;
   }
 
-  /// Produits d'inventaire pas encore sur une facture émise — SOUTE uniquement
-  /// (le bagage à main ne se facture jamais).
   List get _affNonFacturees {
     final deja = <int>{};
     for (final f in _factures) {
@@ -559,7 +521,7 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     try {
       final res = await Api.delete('/missions/${widget.id}');
       if (!mounted) return;
-      // Mission clôturée : peut nécessiter l'accord de l'autre admin.
+
       if (res is Map && res['supprimee'] == false) {
         _snack('${res['message'] ?? 'En attente de validation de l’autre admin.'}');
         return;
@@ -568,7 +530,6 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     } on ApiException catch (e) { _snack(e.message); }
   }
 
-  /* ---------- Structure ---------- */
   bool get _pret {
     if (_m == null || _m!['statut'] == 'cloturee') return false;
     return (_m!['produits'] as List).isNotEmpty && _benef >= _obj && _used <= _cap;
@@ -644,7 +605,7 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     final wide = MediaQuery.of(context).size.width >= 850;
 
     final e = _etape;
-    final volRange = _volRange ?? (e >= 3);       // ② se range tout seul une fois passé
+    final volRange = _volRange ?? (e >= 3);
     return ListView(padding: const EdgeInsets.fromLTRB(16, 10, 16, 32), children: [
       Text('${m['vol'] ?? ''} · ${dateFr(m['depart'])} → ${dateFr(m['retour'])} · '
           '${m['jours']} j · compte ${_devise}',
@@ -654,15 +615,12 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
       if (over)
         _banner(DzColors.red, '⚖ Valeur déclarée > 1 800 000 DA — mission illégale en l’état.'),
 
-      // ---- Timeline des 4 étapes ----
       _timeline(wide),
       const SizedBox(height: 12),
 
-      // ---- KPIs ----
       _kpiRow(),
       const SizedBox(height: 12),
 
-      // ---- ① Préparer : (Dépenses ↑ + Argent BEA ↓) ‖ Check départ — rangeable ----
       if (_avantDepartRange)
         _avantDepartRangeRow(wide)
       else if (wide)
@@ -689,13 +647,9 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
       ],
       const SizedBox(height: 12),
 
-      // ---- ② Vol aller — rangé une fois passé ----
       if (volRange) _volResume() else _sectionVol(closed),
       const SizedBox(height: 12),
 
-      // ---- ③ Sur place : Valise ‖ Factures ----
-      // Valise rangée → les Factures se rangent AVEC : une seule ligne de résumé
-      // pleine largeur (valise + factures), « Dérouler » ressort les deux.
       if (_valiseClose && _valiseRange)
         _valiseResume()
       else if (wide)
@@ -711,27 +665,22 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
       ],
       const SizedBox(height: 12),
 
-      // ---- Bagage à main (non déclaré) — sa propre section, sous la valise ----
       if (_bagMain) ...[
         _sectionBagageMain(closed),
         const SizedBox(height: 12),
       ],
 
-      // ---- Enveloppe douane : tous les bagages clos, taxes pas encore payées ----
       if (!closed && !_taxesReelles && _tousBagagesClos) ...[
         _sectionEnveloppe(),
         const SizedBox(height: 12),
       ],
 
-      // ---- ④ Retour : check retour (+ récap si clôturée) ----
       Opacity(
         opacity: (_valiseClose || closed) ? 1 : .55,
         child: _checklist('Check avant le retour', 'check_retour', _itemsRetour),
       ),
       const SizedBox(height: 12),
 
-      // ---- Arrivée en Algérie : taxes réelles + photo + saisie ----
-      // (masquée si la mission a été clôturée sans saisie à l'arrivée)
       if (_taxesReelles || (_valiseClose && !closed)) ...[
         _sectionArrivee(closed),
         const SizedBox(height: 12),
@@ -752,7 +701,6 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     ]);
   }
 
-  /* ---------- Timeline des étapes ---------- */
   Widget _timeline(bool wide) {
     final e = _etape;
     final m = _m!;
@@ -787,8 +735,7 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
         ]);
     return Container(
       padding: EdgeInsets.symmetric(horizontal: wide ? 18 : 14, vertical: 14),
-      decoration: BoxDecoration(color: DzColors.card, borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: DzColors.line)),
+      decoration: BoxDecoration(color: DzColors.card, borderRadius: BorderRadius.circular(16)),
       child: wide
           ? Row(children: [
               for (var i = 0; i < 4; i++) ...[
@@ -805,7 +752,6 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     );
   }
 
-  /// ② Vol aller rangé : une ligne de résumé.
   Widget _volResume() {
     final m = _m!;
     final hd = '${m['heure_depart'] ?? ''}', ha = '${m['heure_arrivee'] ?? ''}';
@@ -819,8 +765,7 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
 
   Widget _ligneRangee(IconData ic, String texte, {required VoidCallback onDerouler}) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-        decoration: BoxDecoration(color: DzColors.card, borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: DzColors.line)),
+        decoration: BoxDecoration(color: DzColors.card, borderRadius: BorderRadius.circular(14)),
         child: Row(children: [
           const Icon(Icons.check_circle, size: 14, color: DzColors.lime),
           const SizedBox(width: 9),
@@ -835,10 +780,6 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
         ]),
       );
 
-  /* ---------- KPIs : dépenses · marchandise · revenu · bénéfice ----------
-     Design : icône dans une pastille teintée, grande valeur avec l'unité en
-     retrait, libellé discret. La carte Bénéfice — LA carte importante — est
-     teintée à sa couleur et porte une mini-jauge vers l'objectif. */
   Widget _kpiRow() {
     final colBenef =
         _benef >= _obj ? DzColors.lime : _benef >= 0 ? DzColors.amber : DzColors.red;
@@ -950,10 +891,6 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     });
   }
 
-  /* ---------- Argent déposé — carte BEA (marchandise) ----------
-     Ce n'est PAS une dépense : l'argent est déplacé puis revendu. Ses seules
-     dépenses = ses taxes de déplacement (douane 5 % + IFU 0,5 % + taxes de carte),
-     déjà comptées dans la section Dépenses. */
   Widget _sectionBea(bool closed) {
     return _card(
       titre: 'Argent déposé · carte BEA',
@@ -969,8 +906,7 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
                   style: TextStyle(color: DzColors.mut, fontSize: 12))),
         for (final t in _trVoyage) _trancheLigne(t, closed),
         const Divider(color: DzColors.line, height: 18),
-        // Format : « 2 000 $ (270 000 DA) » — le montant d'abord, la devise collée,
-        // la contre-valeur DA entre parenthèses.
+
         Row(children: [
           const Expanded(child: Text('Total déposé',
               style: TextStyle(color: DzColors.mut, fontSize: 12.5))),
@@ -1003,7 +939,6 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     );
   }
 
-  /// Une tranche : montant devise · taux · contre-valeur DA (+ suppression).
   Widget _trancheLigne(Map t, bool closed) {
     final src = '${t['source'] ?? ''}';
     return Padding(
@@ -1037,7 +972,6 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     );
   }
 
-  /* ---------- Dépenses avant le départ (les VRAIS frais) ---------- */
   Widget _sectionDepenses(bool closed) {
     final m = _m!;
     final douaneReelle = closed && m['factures_total'] != null;
@@ -1052,7 +986,7 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
         _ligne('Billet A/R', '${_f(_n(m['billet']))} DA'),
         _ligne('Démarches — ${_demLabel(m['dem_type'])}', '${_f(_n(m['dem_cout']))} DA'),
         _ligne('Frais de dépôt visa', '${_f(_n(m['frais_visa']))} DA'),
-        // Argent de poche : tranches réelles (cash €/$, carte, RMB Alipay…) — sinon prévision.
+
         InkWell(
           onTap: closed ? null : () => _gererTranches(poche: true),
           borderRadius: BorderRadius.circular(6),
@@ -1111,9 +1045,6 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     );
   }
 
-  /* ---------- Dialogue tranches (marchandise OU argent de poche) ---------- */
-  /// Tranches d'argent : marchandise (dépôt carte), poche, ou RESTES rendus au
-  /// retour (restes = true) — même dialogue, motif différent.
   Future<void> _gererTranches({required bool poche, bool restes = false}) async {
     final montant = TextEditingController();
     final taux = TextEditingController();
@@ -1121,7 +1052,7 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     String mode = 'Cash';
     bool saving = false;
     const modes = ['Cash', 'Carte', 'RMB Alipay'];
-    final libre = poche || restes; // devise au choix + support
+    final libre = poche || restes;
     await showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(builder: (ctx, setSt) {
@@ -1177,7 +1108,7 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
                           : 'Chaque dépôt sur la carte, au taux réel du jour.',
                       style: const TextStyle(color: DzColors.mut, fontSize: 11.5)),
                   const SizedBox(height: 14),
-                  // Historique
+
                   if (tranches.isEmpty)
                     const Padding(padding: EdgeInsets.symmetric(vertical: 8),
                         child: Text('Aucune tranche.',
@@ -1223,7 +1154,7 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
                     ]),
                   ],
                   const Divider(color: DzColors.line, height: 22),
-                  // Ajout
+
                   if (libre) ...[
                     Row(children: [
                       for (final d in ['EUR', 'USD', 'RMB', 'DA']) ...[
@@ -1286,7 +1217,6 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
         ),
       );
 
-  /* ---------- Statut du vol ---------- */
   Widget _sectionVol(bool closed) {
     final m = _m!;
     final hd = '${m['heure_depart'] ?? ''}';
@@ -1332,18 +1262,16 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
         Text(date, style: const TextStyle(color: DzColors.mut, fontSize: 10)),
       ]);
 
-  /* ---------- Valise ---------- */
   Widget _sectionValise(bool closed) {
     final m = _m!;
     final produits = m['produits'] as List;
-    // Jauge et place : la SOUTE seulement (2×23 + 3e valise) — le bagage à main
-    // a sa propre section en dessous.
+
     final reste = _capSoute - _usedSoute;
     final vClose = _valiseClose;
     return _card(
       titre: 'Valise — ${_usedSoute.toStringAsFixed(1)} / ${_capSoute.toStringAsFixed(0)} kg'
           '${_valiseSup ? ' (3 valises)' : ''}${vClose ? ' · complète ✓' : ''}',
-      // Valise complète (même non pleine) → verrouille l'ajout, ouvre le check retour.
+
       action: (produits.isEmpty && _aff.isEmpty) ? null : Row(mainAxisSize: MainAxisSize.min, children: [
         if (vClose)
           TextButton.icon(
@@ -1364,7 +1292,7 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
           ),
       ]),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        // ---- Prix minimum RESTANT : baisse à mesure que la valise se remplit ----
+
         Container(
           margin: const EdgeInsets.only(bottom: 10),
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
@@ -1408,7 +1336,7 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
               : 'dépassement ${(-reste).toStringAsFixed(1)} kg !',
               style: const TextStyle(color: DzColors.mut, fontSize: 11)),
         ),
-        // ---- Options bagages : à cocher AVANT de remplir pour un prix du kilo juste ----
+
         if (!closed)
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
@@ -1476,17 +1404,17 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
           ],
         ],
         const SizedBox(height: 6),
-        // Produits venus de l'inventaire (soute — le bagage à main a sa section)
+
         ..._affSoute.map((a) {
           final q = _n(a['quantite']), pu = _n(a['poids_unit']), gp = _n(a['gain_piece']);
           final gainKg = pu > 0 ? gp / pu : 0.0;
           final ok = gainKg >= _pkMin;
-          final numFact = _factureDe(a['id']);          // n° de facture si déjà facturé
+          final numFact = _factureDe(a['id']);
           final verrou = numFact != null;
           return Padding(
             padding: const EdgeInsets.symmetric(vertical: 5),
             child: Row(children: [
-              // Dot : lime = sur la facture N, ambre = pas encore facturé.
+
               Tooltip(
                 message: verrou ? 'Sur la facture n° $numFact' : 'Pas encore facturé',
                 child: Container(
@@ -1514,7 +1442,7 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
             ]),
           );
         }),
-        // Légende des dots (une seule ligne discrète)
+
         if (_affSoute.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 6),
@@ -1528,7 +1456,7 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
               const Text('à facturer', style: TextStyle(color: DzColors.mut, fontSize: 10)),
             ]),
           ),
-        // ---- Facturer à tout moment (au fil des paiements carte) ----
+
         if (!closed && _affNonFacturees.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 10),
@@ -1579,11 +1507,9 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     );
   }
 
-  /// Valise rangée : une ligne de résumé.
   Widget _valiseResume() => Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-        decoration: BoxDecoration(color: DzColors.card, borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: DzColors.line)),
+        decoration: BoxDecoration(color: DzColors.card, borderRadius: BorderRadius.circular(14)),
         child: Row(children: [
           const Icon(Icons.luggage_outlined, size: 16, color: DzColors.lime),
           const SizedBox(width: 9),
@@ -1603,7 +1529,6 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
         ]),
       );
 
-  /* ---------- Bagage à main — non déclaré, jamais facturé ---------- */
   Widget _sectionBagageMain(bool closed) {
     final complet = _bagMainClose;
     return _card(
@@ -1687,7 +1612,6 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     );
   }
 
-  /* ---------- Enveloppe douane — le liquide à préparer avant le retour ---------- */
   Widget _sectionEnveloppe() {
     final liquide = _n(_m!['liquide_remis']);
     return _card(
@@ -1737,7 +1661,6 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     );
   }
 
-  /* ---------- Arrivée — taxes réellement payées + photo du bon + saisie ---------- */
   Widget _sectionArrivee(bool closed) {
     if (!_taxesReelles) {
       return _card(
@@ -1841,7 +1764,6 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     } catch (e) { _snack('Photo indisponible.'); }
   }
 
-  /// Dialogue d'arrivée : taxes exactes, saisie éventuelle, photo du bon.
   Future<void> _openArrivee() async {
     final taxes = TextEditingController(
         text: _taxesReelles ? _f(_n(_m!['taxes_reelles'])).replaceAll(' ', '') : _douane.round().toString());
@@ -1958,7 +1880,6 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     );
   }
 
-  /// Section Factures : liste des factures émises + PDF + génération du reste.
   Widget _sectionFactures(bool closed) {
     final reste = _affNonFacturees;
     String dateCn(dynamic d) {
@@ -1967,8 +1888,7 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     }
     return _card(
       titre: 'Factures — ${_factures.length}',
-      // Un seul bouton « Facturer » dans toute la fiche : celui de la Valise.
-      // (Valise rangée → cette section se range avec elle, dans le même résumé.)
+
       action: _factures.isEmpty ? null : TextButton.icon(
         onPressed: _telechargerToutes,
         style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -1989,8 +1909,7 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
           Container(
             margin: const EdgeInsets.only(bottom: 8),
             padding: const EdgeInsets.fromLTRB(12, 9, 6, 9),
-            decoration: BoxDecoration(color: DzColors.card2, borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: DzColors.line)),
+            decoration: BoxDecoration(color: DzColors.card2, borderRadius: BorderRadius.circular(12)),
             child: Row(children: [
               Container(width: 34, height: 34, alignment: Alignment.center,
                   decoration: BoxDecoration(color: DzColors.lime.withValues(alpha: .12), borderRadius: BorderRadius.circular(9)),
@@ -2039,28 +1958,33 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     );
   }
 
-  /* ---------- Composants ---------- */
-  Widget _card({required String titre, Widget? action, required Widget child}) => Container(
+  Widget _card({required String titre, Widget? action, required Widget child}) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(
+            height: 30,
+            child: Padding(
+              padding: const EdgeInsets.only(left: 16, right: 6),
+              child: Row(children: [
+                Expanded(child: Text(titre.toUpperCase(),
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: DzColors.mut, fontSize: 11,
+                        fontWeight: FontWeight.w700, letterSpacing: .8))),
+                if (action != null) action,
+              ]),
+            ),
+          ),
+          Container(
         decoration: BoxDecoration(
           color: DzColors.card,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: DzColors.line),
         ),
-        padding: const EdgeInsets.fromLTRB(16, 12, 12, 14),
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          // Hauteur de titre FIXE (40 px) : avec ou sans bouton d'action à droite,
-          // le contenu de toutes les cartes démarre exactement à la même hauteur.
-          SizedBox(
-            height: 40,
-            child: Row(children: [
-              Expanded(child: Text(titre,
-                  style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700))),
-              if (action != null) action,
+              child,
             ]),
           ),
-          const SizedBox(height: 4),
-          child,
-        ]),
+        ],
       );
 
   Widget _ligne(String l, String v, {bool gras = false, Color couleur = DzColors.txt}) => Padding(
@@ -2072,17 +1996,15 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
         ]),
       );
 
-  /// Coche automatique de certains items du départ (billet saisi, argent chargé…).
   Map<String, bool> _autoDepart() => {
         'billet_ok': _n(_m!['billet']) > 0 && _m!['depart'] != null,
         'argent_depose': _marchandiseDA > 0,
       };
 
-  /// (faits, total) d'une checklist — items auto compris.
   (int, int) _avancement(String champ, List items, Map<String, bool> auto) {
     final etat = Map<String, dynamic>.from(_m![champ] as Map? ?? {});
     bool val(String cle) => etat[cle] == true || auto[cle] == true;
-    final total = items.length + (champ == 'check_depart' ? 1 : 0); // +1 : billet auto
+    final total = items.length + (champ == 'check_depart' ? 1 : 0);
     var faits = items.where((i) => val(i.$1 as String)).length;
     if (champ == 'check_depart' && (auto['billet_ok'] ?? false)) faits += 1;
     return (faits, total);
@@ -2095,7 +2017,6 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
 
   bool get _valiseClose => _m!['valise_close'] == true;
 
-  /// Les 3 cartes « avant le départ » rangées : une ligne de résumé chacune.
   Widget _avantDepartRangeRow(bool wide) {
     Widget resume(IconData ic, String titre, String valeur, {Color col = DzColors.txt}) =>
         Container(
@@ -2103,7 +2024,6 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
           decoration: BoxDecoration(
             color: DzColors.card,
             borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: DzColors.line),
           ),
           child: Row(children: [
             Icon(ic, size: 15, color: DzColors.lime),
@@ -2157,11 +2077,11 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     bool val(String cle) => etat[cle] == true || auto[cle] == true;
     final (faits, total) = _avancement(champ, items, auto);
     final complet = faits >= total;
-    // Check retour : verrouillé tant que la valise n'est pas déclarée complète.
+
     final verrou = champ == 'check_retour' && !_valiseClose && !closed;
     return _card(
       titre: '$titre — $faits/$total${complet ? ' ✓' : ''}',
-      // Check départ complet → bouton « Ranger » les 3 cartes avant-départ.
+
       action: (champ == 'check_depart' && complet)
           ? TextButton.icon(
               onPressed: () => setState(() => _avantDepartRange = true),
@@ -2199,8 +2119,6 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     );
   }
 
-  /// Ligne de check compacte — même rythme vertical que les `_ligne` des autres
-  /// cartes (CheckboxListTile impose 48 px de haut + un vide interne : moche à côté).
   Widget _checkTile(String label, bool value, ValueChanged<bool>? onChanged, {bool locked = false}) =>
       InkWell(
         onTap: onChanged == null ? null : () => onChanged(!value),
@@ -2254,8 +2172,7 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     final primes = _n(m['primes']);
     final paye = (m['paiements'] as List).fold<double>(0, (s, p) => s + _n(p['montant']));
     final solde = _n(m['attendu']) - paye;
-    // Bénéfice réel = attendu (après invendus) − dépenses (douane et taxes carte
-    // réelles incluses) — la marchandise est déplacée, jamais déduite (serveur idem).
+
     final benefReel = _n(m['attendu']) - _frais;
     final netAgence = benefReel - com - primes;
     return _card(
@@ -2297,7 +2214,6 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     );
   }
 
-  /* ---------- Dialogues ---------- */
   Future<void> _editVol() async {
     final hd = TextEditingController(text: '${_m!['heure_depart'] ?? ''}');
     final ha = TextEditingController(text: '${_m!['heure_arrivee'] ?? ''}');
@@ -2309,14 +2225,13 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
 
   Future<void> _editFrais() async {
     final m = _m!;
-    // Les jours sont déduits du billet (départ→retour) — pas éditables ici.
+
     final ctrls = {
       for (final k in ['billet', 'dem_cout', 'frais_visa', 'budget_jour',
         'autres', 'objectif'])
         k: TextEditingController(text: m[k] == null ? '' : _n(m[k]).toStringAsFixed(0)),
     };
-    // La valeur déclarée en douane n'est plus saisie : automatique
-    // (factures × taux officiel à la clôture, estimée sur le dépôt avant).
+
     const labels = {
       'billet': 'Billet A/R (DA)', 'dem_cout': 'Démarches (DA)', 'frais_visa': 'Frais dépôt visa (DA)',
       'budget_jour': 'Argent de poche / jour (DA)',
@@ -2328,7 +2243,6 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
         (body) => Api.put('/missions/${widget.id}', body), numeric: true);
   }
 
-  /// Petit dialogue générique champ→valeur (numérique ou texte).
   Future<void> _simpleDialog(String titre, List<(String, String, TextEditingController)> fields,
       Future<void> Function(Map<String, dynamic>) onSave, {bool numeric = false}) async {
     bool saving = false;
@@ -2384,14 +2298,13 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     final depot = TextEditingController();
     final attendu = TextEditingController(text: _revenu.toStringAsFixed(0));
     final encaisse = TextEditingController(text: _revenu.toStringAsFixed(0));
-    final declTotal = _declareTotal; // SOUTE uniquement — le bagage à main n'est pas facturé
+    final declTotal = _declareTotal;
     final factures = TextEditingController(text: declTotal > 0 ? declTotal.toStringAsFixed(2) : '');
     final primes = TextEditingController(text: '0');
     final invendus = TextEditingController();
-    // Pièces manquantes par produit d'inventaire (remboursées au prix du manque en RMB).
+
     final manquants = {for (final a in _aff) a['id']: TextEditingController()};
-    // Marge douanière de 30 % avant l'IFU — pré-cochée selon le réglage, ajustable
-    // pour CETTE mission : le choix se fige à la clôture.
+
     bool ifuMarge = _marge30;
     bool saving = false;
     await showDialog(
@@ -2443,9 +2356,7 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
                   TextField(controller: factures, keyboardType: TextInputType.number,
                       decoration: InputDecoration(labelText: 'Total des factures (${_sym(_devise)})')),
                   const SizedBox(height: 8),
-                  // Taxes réelles déjà saisies à l'arrivée → la douane est figée.
-                  // Sinon : la douane ajoute PARFOIS 30 % au CA avant l'IFU — à cocher
-                  // selon ce qui a vraiment été facturé à l'arrivée.
+
                   if (_taxesReelles)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 4),
@@ -2487,7 +2398,7 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
                   if (_aff.isNotEmpty) ...[
                     const SizedBox(height: 18),
                     const Text('PIÈCES MANQUANTES (remboursées au prix du manque, RMB)',
-                        style: TextStyle(color: DzColors.mut2, fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 1)),
+                        style: TextStyle(color: DzColors.mut, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1)),
                     const SizedBox(height: 6),
                     for (final a in _aff)
                       Padding(

@@ -5,9 +5,8 @@ import { requireAuth, requireRole } from './auth.js';
 import { getReglages } from './reglages.js';
 
 export const missionsRouter = Router();
-missionsRouter.use(requireAuth, requireRole('admin'));
+missionsRouter.use(requireAuth, requireRole('admin', 'voyageur'));
 
-/* ---------- Schémas ---------- */
 const missionBase = z.object({
   vol: z.string().max(60).optional().default(''),
   depart: z.string().max(10).optional().nullable(),
@@ -24,29 +23,18 @@ const missionBase = z.object({
   val_declaree: z.coerce.number().nonnegative().optional().nullable(),
 });
 
-// Frais de mission. L'argent de la marchandise n'est JAMAIS une dépense : il est
-// déplacé (carte → Chine → revente). Ses seules dépenses sont ses taxes de
-// déplacement : les taxes d'arrivée (douane 5 % + IFU 0,5 %) et les taxes de carte au retrait
-// (potentielles = comme si TOUT le dépôt était retiré ; réelles à la facturation).
-// NB : plus de « frais carte BEA » à part — c'est la même chose que les taxes de carte.
-// L'argent de poche RÉEL (tranches motif 'poche') remplace jours × budget dès qu'il existe.
-// resteDA = argent RENDU par le voyageur au retour (motif 'reste') : il revient
-// à l'agence, la dépense de poche réelle devient « donné − rendu ».
 const frais = (m, pocheDA = 0, taxesCarteDA = 0, resteDA = 0) =>
   Number(m.billet) + Number(m.dem_cout) + Number(m.frais_visa || 0) +
   Math.max(0, (pocheDA > 0 ? pocheDA : Number(m.jours) * Number(m.budget_jour)) - resteDA) +
   Number(m.douane) + taxesCarteDA + Number(m.autres) + Number(m.manques_da || 0) +
-  (m.valise_sup ? Number(m.valise_sup_prix || 0) : 0) +  // 3e valise achetée à la compagnie
-  Number(m.saisie_da || 0);                              // saisie douanière (comme les manques)
+  (m.valise_sup ? Number(m.valise_sup_prix || 0) : 0) +
+  Number(m.saisie_da || 0);
 
-// Taux du marché parallèle (réglages) pour la devise du compte — c'est à CE taux
-// que les taxes de carte coûtent réellement. Repli : taux moyen des tranches, puis officiel.
 function tauxParallele(reglages, devise, secours) {
   const t = Number(devise === 'EUR' ? reglages.taux_parallele_eur : reglages.taux_parallele_usd);
   return Number.isFinite(t) && t > 0 ? t : secours;
 }
 
-// Valise d'une mission = produits libres + affectations d'inventaire (kg et revenu DA).
 async function valiseDe(id) {
   const libre = (await q(
     `SELECT COALESCE(SUM(kg),0) AS kg, COALESCE(SUM(kg*prix_kg),0) AS rev
@@ -64,9 +52,6 @@ async function valiseDe(id) {
   return { kg, rev };
 }
 
-// Sommes utiles d'une mission, en DA : marchandise (motif 'voyage'), poche
-// (motif 'poche') et RESTES rendus au retour (motif 'reste' — cash devise/DA,
-// RMB Alipay… : l'argent qui REVIENT à l'agence réduit la dépense réelle).
 async function sommesTranches(id) {
   const r = (await q(
     `SELECT
@@ -83,16 +68,6 @@ async function sommesTranches(id) {
   };
 }
 
-// Taxes à l'arrivée = douane 5 % + IFU 0,5 %, sur le CA en DA.
-// CA (DA) = base ($) × taux OFFICIEL. Base = total des prix DÉCLARÉS des produits
-// en valise (c'est ce que diront les factures) dès qu'il y en a, sinon le dépôt
-// carte (on ne peut pas retirer plus que ce qu'il y a dedans).
-//   douane = CA × 5 %
-//   IFU    = (CA + douane) × 0,5 % — et quand la douane ajoute sa marge de 30 % :
-//            ((CA + douane) × 1,30) × 0,5 %
-// En PRÉVISION la marge 30 % est TOUJOURS comptée (« au cas où — pour éviter les
-// mauvaises surprises ») ; le réglage ifu_marge_30 ne sert qu'à pré-cocher la case
-// de la taxe réelle (arrivée / clôture), et le choix réel se fige sur la mission.
 function taxesArrivee(baseDevise, reglages, marge30) {
   const ca = baseDevise * Number(reglages.taux_officiel);
   const douane = ca * 0.05;
@@ -100,21 +75,15 @@ function taxesArrivee(baseDevise, reglages, marge30) {
   return Math.round(douane + ifu);
 }
 
-// Marge 30 % appliquée ? Choix figé sur la mission s'il existe, sinon le réglage.
 function marge30De(ifuMarge, reglages) {
   return ifuMarge == null ? Number(reglages.ifu_marge_30 ?? 1) > 0 : !!ifuMarge;
 }
 
-// Base de PRÉVISION des taxes d'arrivée ($) : Σ prix DÉCLARÉS des produits en
-// SOUTE (le bagage à main n'est jamais déclaré) dès qu'il y en a, sinon l'argent
-// VRAIMENT disponible du dépôt = dépôt − taxes de carte (1 000 $ → 1 000 × (1 − pct)).
 function basePrevision(marchDevise, declare, reglages) {
   const pct = Number(reglages.frais_carte_pct || 0) / 100;
   return declare > 0 ? declare : marchDevise * (1 - pct);
 }
 
-// Total déclaré (USD) d'une mission = Σ affectations SOUTE qté × prix déclaré.
-// Le bagage à main (emplacement 'main') n'est JAMAIS déclaré.
 async function declareDe(id) {
   return Number((await q(
     `SELECT COALESCE(SUM(quantite * COALESCE(prix_declare, 0)), 0) AS t
@@ -124,7 +93,7 @@ async function declareDe(id) {
 
 async function majDouaneEstimee(id) {
   const m = (await q('SELECT statut, taxes_reelles FROM missions WHERE id = $1', [id])).rows[0];
-  // Taxes réelles saisies à l'arrivée → la douane est FIGÉE, plus d'estimation.
+
   if (!m || m.statut === 'cloturee' || m.taxes_reelles != null) return;
   const { marchDevise } = await sommesTranches(id);
   const declare = await declareDe(id);
@@ -139,8 +108,6 @@ const audit = (userId, action, entite, id, details) => q(
 
 const moisDe = (d) => (d || new Date().toISOString().slice(0, 10)).slice(0, 7);
 
-// Jours UTILES sur place : le jour du départ et celui de l'arrivée ne comptent pas
-// (≈ 24 h de vol au total). Ex. départ le 9, retour le 14 → 14−9−1 = 4 jours utiles.
 function joursEntre(dep, ret) {
   if (!dep || !ret) return 4;
   const a = new Date(dep), b = new Date(ret);
@@ -148,7 +115,6 @@ function joursEntre(dep, ret) {
   return j > 0 && j <= 60 ? j : 1;
 }
 
-/* ---------- Liste ---------- */
 missionsRouter.get('/', async (_req, res) => {
   const { rows } = await q(`
     SELECT m.*, v.nom AS voyageur_nom, v.devise_compte,
@@ -177,8 +143,7 @@ missionsRouter.get('/', async (_req, res) => {
     WHERE m.statut <> 'annulee'
     ORDER BY m.depart DESC NULLS LAST, m.id DESC
   `);
-  // Taxes de carte (au taux PARALLÈLE des réglages) : réelles (factures) si clôturée,
-  // sinon potentielles (tout le dépôt retiré). Douane prévue recalculée en direct.
+
   const reglages = await getReglages();
   const pct = Number(reglages.frais_carte_pct || 0) / 100;
   res.json(rows.map((r) => {
@@ -190,7 +155,7 @@ missionsRouter.get('/', async (_req, res) => {
       : Math.round(mdev * pct * tPar);
     const decl = Number(r.declare_total);
     const douane = r.taxes_reelles != null
-      ? Number(r.taxes_reelles) // taxes réellement payées aux douaniers — figées
+      ? Number(r.taxes_reelles)
       : r.statut === 'cloturee'
         ? Number(r.douane)
         : taxesArrivee(basePrevision(mdev, decl, reglages), reglages, true);
@@ -198,7 +163,6 @@ missionsRouter.get('/', async (_req, res) => {
   }));
 });
 
-/* ---------- Détail ---------- */
 missionsRouter.get('/:id', async (req, res) => {
   const id = Number(req.params.id);
   const m = (await q(
@@ -216,7 +180,7 @@ missionsRouter.get('/:id', async (req, res) => {
     'SELECT * FROM paiements WHERE mission_id = $1 ORDER BY date, id', [id])).rows;
   const tranches = (await q(
     'SELECT * FROM tranches_devises WHERE mission_id = $1 ORDER BY id', [id])).rows;
-  // Produits venus de l'inventaire (avec chambre, poids/unité, gain calculés).
+
   const affectations = (await q(
     `SELECT a.id, a.ligne_id, a.quantite, a.manquants, a.prix_declare,
             a.emplacement, a.saisis,
@@ -229,8 +193,7 @@ missionsRouter.get('/:id', async (req, res) => {
      JOIN bons b ON b.id = l.bon_id
      JOIN chambres c ON c.id = b.chambre_id
      WHERE a.mission_id = $1 ORDER BY a.id`, [id])).rows;
-  // Douane prévue toujours à jour (auto-répare aussi les missions d'avant la mise
-  // à jour) — sauf si les taxes réelles ont été saisies à l'arrivée : figées.
+
   if (m.statut !== 'cloturee' && m.taxes_reelles == null) {
     const reglages = await getReglages();
     const marchDevise = tranches
@@ -250,7 +213,6 @@ missionsRouter.get('/:id', async (req, res) => {
   res.json({ ...m, produits, paiements, tranches, affectations, arrivee_photo: !!photo });
 });
 
-/* ---------- Création multi-voyageurs : un vol, N missions ---------- */
 missionsRouter.post('/', async (req, res) => {
   const parsed = missionBase.extend({
     voyageur_ids: z.array(z.coerce.number().int()).min(1),
@@ -260,7 +222,6 @@ missionsRouter.post('/', async (req, res) => {
   const mois = moisDe(base.depart);
   const reglages = await getReglages();
 
-  // Valeurs par défaut depuis les réglages (modifiables ensuite sur la fiche).
   if (!base.dem_cout) {
     base.dem_cout = {
       premiere: reglages.prix_premiere,
@@ -271,10 +232,9 @@ missionsRouter.post('/', async (req, res) => {
   }
   const fraisVisa = reglages.frais_depot_visa ?? 6800;
   if (!req.body.budget_jour) base.budget_jour = reglages.budget_jour_defaut ?? 3000;
-  // Jours déduits du billet (départ→retour), jamais saisis à la main.
+
   base.jours = joursEntre(base.depart, base.retour);
 
-  // Anti-doublon : même vol + même départ + mêmes voyageurs créés il y a < 30 s → on renvoie l'existant.
   if (base.vol && base.depart) {
     const dup = (await q(
       `SELECT id, voyageur_id FROM missions
@@ -287,7 +247,6 @@ missionsRouter.post('/', async (req, res) => {
     }
   }
 
-  // Garde-fous : 2 missions/mois max + documents valides à la date du RETOUR (douane au retour).
   const dateRef = base.retour || base.depart || new Date().toISOString().slice(0, 10);
   const bloques = [];
   for (const vid of voyageur_ids) {
@@ -315,7 +274,7 @@ missionsRouter.post('/', async (req, res) => {
   const created = [];
   for (const vid of voyageur_ids) {
     const v = (await q('SELECT * FROM voyageurs WHERE id = $1', [vid])).rows[0];
-    const kgSoute = (Number(v.bagages) || 2) * 23; // paramètre valises du voyageur
+    const kgSoute = (Number(v.bagages) || 2) * 23;
     const seq = (await q('SELECT COUNT(*) AS n FROM missions')).rows[0].n;
     const code = 'MSN-' + String(Number(seq) + 1).padStart(3, '0');
     const { rows } = await q(
@@ -330,7 +289,7 @@ missionsRouter.post('/', async (req, res) => {
     await q(`INSERT INTO audit_log (user_id, action, entite, entite_id, details)
              VALUES ($1,'create','mission',$2,$3)`,
       [req.user.sub, rows[0].id, JSON.stringify({ code, voyageur: v.nom })]);
-    // Limite mensuelle atteinte (2 missions) → statut « limite » posé automatiquement.
+
     const nMois = Number((await q(
       `SELECT COUNT(*) AS n FROM missions
        WHERE voyageur_id = $1 AND statut <> 'annulee' AND to_char(depart,'YYYY-MM') = $2`,
@@ -342,7 +301,6 @@ missionsRouter.post('/', async (req, res) => {
   res.status(201).json(created);
 });
 
-/* ---------- Mise à jour (frais / statut) ---------- */
 missionsRouter.put('/:id', async (req, res) => {
   const id = Number(req.params.id);
   const parsed = missionBase.partial().extend({
@@ -357,14 +315,14 @@ missionsRouter.put('/:id', async (req, res) => {
     heure_arrivee: z.string().max(5).nullable().optional(),
     poche_mode: z.enum(['cash_da', 'rmb_alipay', 'cash_devise', 'carte']).optional(),
     valise_close: z.boolean().optional(),
-    // Bagages supplémentaires : 3e valise achetée (prix = dépense) + bagage à main 8 kg.
+
     valise_sup: z.boolean().optional(),
     valise_sup_prix: z.coerce.number().nonnegative().optional(),
     valise_sup_kg: z.coerce.number().positive().optional(),
     bagage_main: z.boolean().optional(),
-    bagage_main_kg: z.coerce.number().positive().optional(),   // saisi à la main (défaut 8)
+    bagage_main_kg: z.coerce.number().positive().optional(),
     bagage_main_close: z.boolean().optional(),
-    // Liquide (DA) remis au voyageur avec l'enveloppe douane — le reste est pour lui.
+
     liquide_remis: z.coerce.number().nonnegative().nullable().optional(),
   }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Données invalides.' });
@@ -375,12 +333,11 @@ missionsRouter.put('/:id', async (req, res) => {
     return res.status(409).json({ error: 'Mission clôturée — la compta passée ne se modifie pas.' });
   }
   const m = { ...cur, ...parsed.data };
-  // Jours recalculés depuis les dates si l'une d'elles change.
+
   if (parsed.data.depart !== undefined || parsed.data.retour !== undefined) {
     m.jours = joursEntre(m.depart, m.retour);
   }
-  // v6 : plus AUCUN frais de carte avant le départ — ils ne se paient
-  // qu'à la facturation de la marchandise (clôture).
+
   m.poche_frais_carte = 0;
   const { rows } = await q(
     `UPDATE missions SET vol=$1, depart=$2, retour=$3, jours=$4, budget_jour=$5, billet=$6,
@@ -401,19 +358,18 @@ missionsRouter.put('/:id', async (req, res) => {
      m.bagage_main ?? false, m.bagage_main_kg ?? 8, m.bagage_main_close ?? false,
      m.liquide_remis ?? null, id]);
 
-  // Allocation touristique : une fois par an et par voyageur — l'usage se grave sur sa fiche.
   if (parsed.data.allocation_utilisee === true) {
     await q('UPDATE voyageurs SET allocation_derniere = $1 WHERE id = $2',
       [m.depart ?? new Date().toISOString().slice(0, 10), cur.voyageur_id]);
   } else if (parsed.data.allocation_utilisee === false && cur.allocation_utilisee) {
     await q('UPDATE voyageurs SET allocation_derniere = NULL WHERE id = $1', [cur.voyageur_id]);
   }
-  // Journal : quelle mission, et quoi (champs modifiés) — checklists résumées.
+
   const champs = Object.keys(parsed.data);
   const details = { code: cur.code };
   if (parsed.data.valise_close !== undefined) {
     details.valise = parsed.data.valise_close ? 'complète' : 'rouverte';
-    // Valise rouverte → les factures émises ne correspondent plus : annulées, à regénérer.
+
     if (parsed.data.valise_close === false) {
       await q(`UPDATE factures SET statut = 'annulee' WHERE mission_id = $1 AND statut = 'emise'`, [id]);
     }
@@ -428,30 +384,26 @@ missionsRouter.put('/:id', async (req, res) => {
   res.json(rows[0]);
 });
 
-// Efface toute la trace d'une mission (compta comprise), de façon irréversible.
 async function purgeMission(id, code, userId) {
   await q('DELETE FROM paiements WHERE mission_id = $1', [id]);
   await q('DELETE FROM tranches_devises WHERE mission_id = $1', [id]);
   await q('DELETE FROM demandes_suppression WHERE mission_id = $1', [id]);
-  await q('DELETE FROM missions WHERE id = $1', [id]); // produits : cascade
+  await q('DELETE FROM missions WHERE id = $1', [id]);
   await q(`INSERT INTO audit_log (user_id, action, entite, entite_id, details)
            VALUES ($1,'delete','mission',$2,$3)`,
     [userId, id, JSON.stringify({ code })]);
 }
 
-/* ---------- Suppression ---------- */
 missionsRouter.delete('/:id', async (req, res) => {
   const id = Number(req.params.id);
   const m = (await q('SELECT statut, code FROM missions WHERE id = $1', [id])).rows[0];
   if (!m) return res.status(404).json({ error: 'Mission introuvable.' });
 
-  // Mission NON clôturée : suppression directe.
   if (m.statut !== 'cloturee') {
     await purgeMission(id, m.code, req.user.sub);
     return res.json({ ok: true, supprimee: true });
   }
 
-  // Mission clôturée : suppression seulement si TOUS les admins approuvent.
   const admins = (await q(`SELECT id FROM users WHERE role='admin' AND actif`)).rows.map((r) => r.id);
   let dem = (await q(
     `SELECT * FROM demandes_suppression WHERE mission_id=$1 AND statut='en_attente'`,
@@ -484,7 +436,6 @@ missionsRouter.delete('/:id', async (req, res) => {
   });
 });
 
-/* ---------- Valise ---------- */
 missionsRouter.post('/:id/produits', async (req, res) => {
   const id = Number(req.params.id);
   const parsed = z.object({
@@ -520,7 +471,6 @@ missionsRouter.delete('/:id/produits/:pid', async (req, res) => {
   res.json({ ok: true });
 });
 
-/* ---------- Clôture : fige la commission du voyageur ---------- */
 missionsRouter.post('/:id/cloture', async (req, res) => {
   const id = Number(req.params.id);
   const parsed = z.object({
@@ -529,9 +479,9 @@ missionsRouter.post('/:id/cloture', async (req, res) => {
     encaisse: z.coerce.number().nonnegative().default(0),
     primes: z.coerce.number().nonnegative().default(0),
     invendus: z.string().max(1000).optional().default(''),
-    factures_total: z.coerce.number().nonnegative().optional(), // total des factures, en devise du compte
-    ifu_marge: z.boolean().optional(),  // la douane a-t-elle appliqué sa marge de 30 % ? (défaut : réglage)
-    // Pièces perdues par produit d'inventaire → remboursées au prix du manque (RMB).
+    factures_total: z.coerce.number().nonnegative().optional(),
+    ifu_marge: z.boolean().optional(),
+
     manquants: z.array(z.object({
       affectation_id: z.coerce.number().int(),
       quantite: z.coerce.number().nonnegative(),
@@ -549,13 +499,12 @@ missionsRouter.post('/:id/cloture', async (req, res) => {
 
   const { kg } = await valiseDe(id);
   const d = parsed.data;
-  // Total des factures par défaut = Σ prix déclarés de la valise (ce que disent les factures).
+
   if (d.factures_total == null) {
     const decl = await declareDe(id);
     if (decl > 0) d.factures_total = Math.round(decl * 100) / 100;
   }
 
-  // Manques : coût = pièces × prix du manque (RMB) × taux RMB — une dépense de la mission.
   const reglagesM = await getReglages();
   let manquesDA = 0;
   for (const mq of d.manquants) {
@@ -564,7 +513,7 @@ missionsRouter.post('/:id/cloture', async (req, res) => {
       `SELECT a.quantite, a.saisis, l.manque_rmb FROM affectations a JOIN bon_lignes l ON l.id = a.ligne_id
        WHERE a.id = $1 AND a.mission_id = $2`, [mq.affectation_id, id])).rows[0];
     if (!a) continue;
-    // Une pièce déjà saisie par la douane n'est pas aussi « manquante » — pas de double compte.
+
     const qte = Math.min(mq.quantite, Number(a.quantite) - Number(a.saisis || 0));
     await q('UPDATE affectations SET manquants = $1 WHERE id = $2', [qte, mq.affectation_id]);
     manquesDA += qte * Number(a.manque_rmb) * Number(reglagesM.taux_rmb || 0);
@@ -573,27 +522,22 @@ missionsRouter.post('/:id/cloture', async (req, res) => {
   await q('UPDATE missions SET manques_da = $1 WHERE id = $2', [manquesDA, id]);
   m.manques_da = manquesDA;
 
-  // Taxes d'arrivée réelles : douane 5 % + IFU 0,5 % (marge 30 % selon la case
-  // cochée) sur les factures × taux OFFICIEL — remplacent l'avance. Les taxes de
-  // carte réelles (factures × %) remplacent les potentielles, et le solde de
-  // devises non dépensé se reporte sur le compte du voyageur.
   const reglages = await getReglages();
   const marge30 = d.ifu_marge != null ? d.ifu_marge : marge30De(m.ifu_marge, reglages);
   const { marchDevise, marchDA, pocheDA, resteDA } = await sommesTranches(id);
   const pct = Number(reglages.frais_carte_pct || 0) / 100;
   const tMoyen = marchDevise > 0 ? marchDA / marchDevise : Number(reglages.taux_officiel);
-  // Les taxes de carte se paient en devise achetée au marché PARALLÈLE → coût réel à ce taux.
+
   const tPar = tauxParallele(reglages, m.v_devise, tMoyen);
-  let taxesCarteDA = Math.round(marchDevise * pct * tPar); // potentiel : tout le dépôt retiré
+  let taxesCarteDA = Math.round(marchDevise * pct * tPar);
   if (d.factures_total != null) {
-    // Taxes réelles saisies à l'arrivée → elles PRIMENT (payées aux douaniers,
-    // photo du bon à l'appui) ; sinon calcul sur les factures.
+
     const taxes = m.taxes_reelles != null
       ? Number(m.taxes_reelles)
       : taxesArrivee(d.factures_total, reglages, marge30);
     const fraisCarteDevise = d.factures_total * pct;
-    taxesCarteDA = Math.round(fraisCarteDevise * tPar); // réel : sur les factures
-    // Valeur déclarée en douane : automatique = factures × taux officiel.
+    taxesCarteDA = Math.round(fraisCarteDevise * tPar);
+
     const valDeclaree = Math.round(d.factures_total * Number(reglages.taux_officiel));
     const dispo = Number(m.v_solde) + marchDevise;
     const soldeNouveau = Math.max(0, dispo - d.factures_total - fraisCarteDevise);
@@ -601,14 +545,12 @@ missionsRouter.post('/:id/cloture', async (req, res) => {
       [soldeNouveau, m.voyageur_id]);
     await q('UPDATE missions SET douane = $1, factures_total = $2, val_declaree = $3 WHERE id = $4',
       [taxes, d.factures_total, valDeclaree, id]);
-    m.douane = taxes; // la compta utilise la douane réelle
+    m.douane = taxes;
     m.val_declaree = valDeclaree;
   }
 
-  // Bénéfice = attendu − frais (poche réelle + taxes de carte incluses).
-  // L'argent de la marchandise n'y entre PAS : il est déplacé, pas dépensé.
   const benefice = d.attendu - frais(m, pocheDA, taxesCarteDA, resteDA);
-  // La commission appliquée est celle du voyageur AU MOMENT de la clôture — figée à vie.
+
   const commission =
     m.v_mode === 'kg' ? Number(m.v_val) * kg :
     m.v_mode === 'pct' ? Math.max(0, benefice) * Number(m.v_val) / 100 :
@@ -629,10 +571,6 @@ missionsRouter.post('/:id/cloture', async (req, res) => {
   res.json(rows[0]);
 });
 
-/* ---------- Arrivée : taxes réellement payées aux douaniers ----------
-   Saisies après le vol : elles REMPLACENT la prévision dans toute la compta.
-   La saisie douanière (pièces confisquées) est traitée comme les manques :
-   hors revenu + remboursée à la chambre au prix du manque (RMB). */
 missionsRouter.post('/:id/arrivee', async (req, res) => {
   const id = Number(req.params.id);
   const parsed = z.object({
@@ -672,11 +610,10 @@ missionsRouter.post('/:id/arrivee', async (req, res) => {
   res.json(rows[0]);
 });
 
-/* Photo du bon remis par les douaniers — une seule par mission, remplacée à chaque envoi. */
 missionsRouter.post('/:id/arrivee/photo', async (req, res) => {
   const id = Number(req.params.id);
   const parsed = z.object({
-    data: z.string().min(1),                       // base64 (sans préfixe data:)
+    data: z.string().min(1),
     mime: z.string().max(60).optional().default('image/jpeg'),
   }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Photo invalide.' });
@@ -702,18 +639,14 @@ missionsRouter.get('/:id/arrivee/photo', async (req, res) => {
   res.send(doc.data);
 });
 
-/* ---------- Tranches de devises ----------
-   motif 'voyage' : argent de la marchandise déposé sur la carte BEA
-   motif 'poche'  : argent de poche réel (cash €/$, devise carte, RMB Alipay, DA…) */
 missionsRouter.post('/:id/tranches', async (req, res) => {
   const id = Number(req.params.id);
   const parsed = z.object({
-    montant: z.coerce.number().positive(),           // dans la devise choisie
+    montant: z.coerce.number().positive(),
     devise: z.enum(['USD', 'EUR', 'RMB', 'DA']).default('USD'),
-    taux: z.coerce.number().positive().optional(),   // DA pour 1 unité de la devise
-    source: z.string().max(80).optional().default(''), // cash / carte / alipay…
-    // 'reste' = argent RENDU au retour (cash devise/DA, RMB Alipay…) — tracé
-    // support par support, il réduit la dépense de poche réelle.
+    taux: z.coerce.number().positive().optional(),
+    source: z.string().max(80).optional().default(''),
+
     motif: z.enum(['voyage', 'poche', 'reste']).default('voyage'),
   }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Tranche invalide.' });
@@ -725,12 +658,12 @@ missionsRouter.post('/:id/tranches', async (req, res) => {
   const d = parsed.data;
   const taux = d.devise === 'DA' ? 1 : d.taux;
   if (!taux) return res.status(400).json({ error: 'Taux requis pour une devise étrangère.' });
-  // NB : la colonne `usd` porte le montant quelle que soit la devise (nom historique).
+
   const { rows } = await q(
     `INSERT INTO tranches_devises (voyageur_id, mission_id, usd, taux, devise, source, motif)
      VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
     [m.voyageur_id, id, d.montant, taux, d.devise, d.source, d.motif]);
-  if (d.motif === 'voyage') await majDouaneEstimee(id); // douane = avance sur le dépôt carte
+  if (d.motif === 'voyage') await majDouaneEstimee(id);
   const mc = (await q('SELECT code FROM missions WHERE id = $1', [id])).rows[0];
   await audit(req.user.sub, 'tranche', 'mission', id,
     { code: mc?.code, motif: d.motif, montant: d.montant, devise: d.devise, taux, source: d.source });
@@ -751,27 +684,38 @@ missionsRouter.delete('/:id/tranches/:tid', async (req, res) => {
   res.json({ ok: true });
 });
 
-/* ---------- Paiements / encaissements (créances) ----------
-   chambre_id optionnel : versement d'un DÉPÔT précis — sinon versement global. */
 missionsRouter.post('/:id/paiements', async (req, res) => {
   const id = Number(req.params.id);
   const parsed = z.object({
     montant: z.coerce.number().positive(),
+    devise: z.enum(['DA', 'USD', 'EUR']).default('DA'),
+    taux: z.coerce.number().positive().optional(),
+    moyen: z.enum(['cash', 'en_ligne']).default('cash'),
     note: z.string().max(200).optional().default('versement dépôt'),
     chambre_id: z.coerce.number().int().optional(),
     date: z.string().max(10).optional(),
   }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Montant invalide.' });
   const d = parsed.data;
+  if (d.devise !== 'DA' && !(Number(d.taux) > 0)) {
+    return res.status(400).json({ error: 'Taux requis pour un versement en devise.' });
+  }
+  const montantDA = d.devise === 'DA' ? d.montant : Math.round(d.montant * d.taux);
   const { rows } = await q(
-    `INSERT INTO paiements (mission_id, montant, note, chambre_id, user_id, date)
-     VALUES ($1,$2,$3,$4,$5,COALESCE($6, CURRENT_DATE)) RETURNING *`,
-    [id, d.montant, d.note, d.chambre_id ?? null, req.user.sub, d.date ?? null]);
+    `INSERT INTO paiements (mission_id, montant, note, chambre_id, user_id, date,
+       devise, taux, montant_devise, moyen)
+     VALUES ($1,$2,$3,$4,$5,COALESCE($6, CURRENT_DATE),$7,$8,$9,$10) RETURNING *`,
+    [id, montantDA, d.note, d.chambre_id ?? null, req.user.sub, d.date ?? null,
+     d.devise, d.devise === 'DA' ? null : d.taux,
+     d.devise === 'DA' ? null : d.montant, d.moyen]);
   const m = (await q('SELECT code FROM missions WHERE id = $1', [id])).rows[0];
   const ch = d.chambre_id
     ? (await q('SELECT nom FROM chambres WHERE id = $1', [d.chambre_id])).rows[0] : null;
-  await audit(req.user.sub, 'encaissement', 'mission', id,
-    { code: m?.code, montant: d.montant, ...(ch ? { depot: ch.nom } : {}) });
+  await audit(req.user.sub, 'encaissement', 'mission', id, {
+    code: m?.code, montant: montantDA, moyen: d.moyen,
+    ...(d.devise !== 'DA' ? { devise: d.devise, montant_devise: d.montant, taux: d.taux } : {}),
+    ...(ch ? { depot: ch.nom } : {}),
+  });
   res.status(201).json(rows[0]);
 });
 

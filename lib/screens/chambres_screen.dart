@@ -4,9 +4,6 @@ import '../theme.dart';
 import '../widgets/date_field.dart';
 import 'chambre_detail_screen.dart';
 
-/// Chambres — les grossistes en Chine chez qui on récupère la marchandise,
-/// avec leur dépôt en Algérie et leurs contacts (Chine / Algérie).
-/// Liste + fiche en page (maître-détail sur PC, la sidebar reste visible).
 class ChambresScreen extends StatefulWidget {
   const ChambresScreen({super.key});
   @override
@@ -132,9 +129,6 @@ class _ChambresScreenState extends State<ChambresScreen> {
 
 }
 
-/// Formulaire création / modification d'une chambre (contacts multiples).
-/// Réutilisé depuis l'Inventaire (création rapide au moment d'ouvrir un bon).
-/// Retourne la chambre créée/modifiée (Map) ou null.
 Future<Map?> showChambreForm(BuildContext context, {Map? chambre, VoidCallback? onDone,
     String? nomInitial}) async {
   final nom = TextEditingController(text: chambre?['nom'] ?? nomInitial ?? '');
@@ -142,7 +136,7 @@ Future<Map?> showChambreForm(BuildContext context, {Map? chambre, VoidCallback? 
   final wilaya = TextEditingController(text: chambre?['depot_wilaya'] ?? '');
   final adresse = TextEditingController(text: chambre?['depot_adresse'] ?? '');
   final note = TextEditingController(text: chambre?['note'] ?? '');
-  // Contact = (nom, tél, pays) — pays : 'chine' ou 'algerie' (stocké dans `role`).
+
   final contacts = <(TextEditingController, TextEditingController, TextEditingController)>[
     for (final k in (chambre?['contacts'] as List? ?? []))
       (TextEditingController(text: '${k['nom']}'), TextEditingController(text: '${k['tel'] ?? ''}'),
@@ -201,7 +195,7 @@ Future<Map?> showChambreForm(BuildContext context, {Map? chambre, VoidCallback? 
                       decoration: const InputDecoration(labelText: 'Ville'))),
                 ]),
                 const SizedBox(height: 18),
-                const Text('DÉPÔT EN ALGÉRIE', style: TextStyle(color: DzColors.mut2, fontSize: 10,
+                const Text('DÉPÔT EN ALGÉRIE', style: TextStyle(color: DzColors.mut, fontSize: 11,
                     fontWeight: FontWeight.w700, letterSpacing: 1.2)),
                 const SizedBox(height: 8),
                 Row(children: [
@@ -213,8 +207,8 @@ Future<Map?> showChambreForm(BuildContext context, {Map? chambre, VoidCallback? 
                 ]),
                 const SizedBox(height: 18),
                 Row(children: [
-                  const Expanded(child: Text('CONTACTS (CHINE / ALGÉRIE)', style: TextStyle(color: DzColors.lime,
-                      fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 1.2))),
+                  const Expanded(child: Text('CONTACTS (CHINE / ALGÉRIE)', style: TextStyle(color: DzColors.mut,
+                      fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1.2))),
                   TextButton.icon(
                     onPressed: () => setSt(() => contacts.add(
                         (TextEditingController(), TextEditingController(), TextEditingController(text: 'algerie')))),
@@ -231,7 +225,7 @@ Future<Map?> showChambreForm(BuildContext context, {Map? chambre, VoidCallback? 
                         keyboardType: TextInputType.phone,
                         decoration: const InputDecoration(labelText: 'Téléphone', isDense: true))),
                     const SizedBox(width: 8),
-                    // Pays du contact : Chine (à la chambre) ou Algérie (au dépôt)
+
                     SegmentedButton<String>(
                       style: ButtonStyle(
                         visualDensity: VisualDensity.compact,

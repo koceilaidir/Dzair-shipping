@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import '../theme.dart';
 
-/// Le mark officiel : D arrondi avec l'avion en espace négatif.
-/// Reproduction exacte du SVG maître (viewBox 200×200).
 class DzairLogo extends StatelessWidget {
   final double size;
   final Color color;
@@ -27,7 +25,6 @@ class _DzairLogoPainter extends CustomPainter {
     canvas.saveLayer(Offset.zero & size, Paint());
     canvas.scale(s);
 
-    // Le D : coins extérieurs gauches arrondis, demi-cercle à droite.
     final d = Path()
       ..moveTo(56, 26)
       ..lineTo(92, 26)
@@ -39,7 +36,6 @@ class _DzairLogoPainter extends CustomPainter {
       ..close();
     canvas.drawPath(d, Paint()..color = color);
 
-    // L'avion, découpé en négatif (BlendMode.clear).
     final clearStroke = Paint()
       ..blendMode = BlendMode.clear
       ..style = PaintingStyle.stroke
@@ -47,11 +43,9 @@ class _DzairLogoPainter extends CustomPainter {
       ..strokeJoin = StrokeJoin.round;
     final clearFill = Paint()..blendMode = BlendMode.clear;
 
-    // Fuselage (la queue perce le bord gauche du D).
     canvas.drawLine(
       const Offset(18, 100), const Offset(128, 100), clearStroke..strokeWidth = 20);
 
-    // Ailes effilées : larges près du corps.
     final wingTop = Path()
       ..moveTo(103, 100)..lineTo(76, 100)..lineTo(51, 61)..lineTo(65, 56)..close();
     final wingBottom = Path()
@@ -61,7 +55,6 @@ class _DzairLogoPainter extends CustomPainter {
       canvas.drawPath(w, clearStroke..strokeWidth = 9);
     }
 
-    // Empennage large, arrondi visible à l'arrière.
     final tailTop = Path()
       ..moveTo(44, 100)..lineTo(26, 100)..lineTo(13, 79)..lineTo(28, 76)..close();
     final tailBottom = Path()
@@ -78,7 +71,6 @@ class _DzairLogoPainter extends CustomPainter {
   bool shouldRepaint(covariant _DzairLogoPainter old) => old.color != color;
 }
 
-/// Wordmark "Dzair Shipping" à côté du logo.
 class DzairWordmark extends StatelessWidget {
   final double fontSize;
   const DzairWordmark({super.key, this.fontSize = 26});
@@ -88,10 +80,9 @@ class DzairWordmark extends StatelessWidget {
     return RichText(
       text: TextSpan(
         style: TextStyle(
-          fontFamily: 'Poppins',
           fontSize: fontSize,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 0,
+          fontWeight: FontWeight.w800,
+          letterSpacing: -0.5,
           color: DzColors.txt,
         ),
         children: const [

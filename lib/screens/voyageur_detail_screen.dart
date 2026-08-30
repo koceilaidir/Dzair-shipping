@@ -3,7 +3,6 @@ import '../services/api.dart';
 import '../theme.dart';
 import '../widgets/date_field.dart';
 
-/// Fiche voyageur en page : mini-dashboard, statut, validités, dette, édition.
 class VoyageurDetailScreen extends StatefulWidget {
   final int id;
   final bool embedded;
@@ -101,7 +100,7 @@ class _VoyageurDetailScreenState extends State<VoyageurDetailScreen> {
       ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 720),
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          // En-tête statut
+
           Row(children: [
             _statutChip(sLabel, sColor),
             const Spacer(),
@@ -111,7 +110,6 @@ class _VoyageurDetailScreenState extends State<VoyageurDetailScreen> {
           ]),
           const SizedBox(height: 14),
 
-          // Mini-dashboard
           Row(children: [
             _stat('Missions ce mois', '$_missionsMois / 2', DzColors.txt),
             const SizedBox(width: 10),
@@ -121,7 +119,6 @@ class _VoyageurDetailScreenState extends State<VoyageurDetailScreen> {
           ]),
           const SizedBox(height: 10),
 
-          // Infos
           _card('Infos', [
             _row('Nom sur le passeport', '${(v['nom_passeport'] ?? '').toString().isEmpty ? '— à renseigner (factures)' : v['nom_passeport']}',
                 couleur: (v['nom_passeport'] ?? '').toString().isEmpty ? DzColors.amber : DzColors.txt),
@@ -138,7 +135,6 @@ class _VoyageurDetailScreenState extends State<VoyageurDetailScreen> {
           ]),
           const SizedBox(height: 10),
 
-          // Validités
           _card('Validités & allocation', [
             _row('Passeport', dateFr(v['passeport_expire'])),
             _row('Autorisation ANAE', dateFr(v['autorisation_expire'])),
@@ -160,7 +156,6 @@ class _VoyageurDetailScreenState extends State<VoyageurDetailScreen> {
             ]),
           const SizedBox(height: 10),
 
-          // Historique missions
           _card('Ses missions', [
             if (_missions.isEmpty)
               const Padding(padding: EdgeInsets.symmetric(vertical: 8),
@@ -215,8 +210,7 @@ class _VoyageurDetailScreenState extends State<VoyageurDetailScreen> {
         child: Container(
           padding: const EdgeInsets.fromLTRB(14, 13, 14, 13),
           decoration: BoxDecoration(
-              color: DzColors.card, borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: DzColors.line)),
+              color: DzColors.card, borderRadius: BorderRadius.circular(16)),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(l.toUpperCase(), style: const TextStyle(color: DzColors.mut, fontSize: 8.5,
                 fontWeight: FontWeight.w700, letterSpacing: .6)),
@@ -229,8 +223,7 @@ class _VoyageurDetailScreenState extends State<VoyageurDetailScreen> {
 
   Widget _card(String titre, List<Widget> children) => Container(
         decoration: BoxDecoration(
-            color: DzColors.card, borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: DzColors.line)),
+            color: DzColors.card, borderRadius: BorderRadius.circular(16)),
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           Text(titre, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
@@ -247,7 +240,6 @@ class _VoyageurDetailScreenState extends State<VoyageurDetailScreen> {
         ]),
       );
 
-  /* ---------- Édition ---------- */
   Future<void> _editForm() async {
     final v = _v!;
     final nom = TextEditingController(text: v['nom']);
@@ -261,7 +253,7 @@ class _VoyageurDetailScreenState extends State<VoyageurDetailScreen> {
     final detteMontant = TextEditingController(text: '${_n(v['dette_montant']).toStringAsFixed(0)}');
     String commMode = v['comm_mode'] ?? 'pct';
     String deviseCompte = v['devise_compte'] ?? 'USD';
-    // « limite » est automatique — on ne l'édite pas, on repart de « disponible ».
+
     String statut = v['statut_dispo'] == 'limite' ? 'disponible' : (v['statut_dispo'] ?? 'disponible');
     bool allocationEligible = v['allocation_eligible'] ?? true;
     bool detteActive = v['dette_active'] == true;
@@ -314,7 +306,7 @@ class _VoyageurDetailScreenState extends State<VoyageurDetailScreen> {
                   const SizedBox(height: 18),
                   TextField(controller: nom, decoration: const InputDecoration(labelText: 'Nom complet')),
                   const SizedBox(height: 16),
-                  const Text('IDENTITÉ CLIENT (FACTURES)', style: TextStyle(color: DzColors.mut2, fontSize: 10,
+                  const Text('IDENTITÉ CLIENT (FACTURES)', style: TextStyle(color: DzColors.mut, fontSize: 11,
                       fontWeight: FontWeight.w700, letterSpacing: 1.2)),
                   const SizedBox(height: 8),
                   TextField(controller: nomPass, textCapitalization: TextCapitalization.characters,
@@ -332,8 +324,7 @@ class _VoyageurDetailScreenState extends State<VoyageurDetailScreen> {
                     Expanded(child: TextField(controller: tel,
                         decoration: const InputDecoration(labelText: 'Téléphone'))),
                     const SizedBox(width: 12),
-                    // « Limite » n'est jamais choisi à la main : il se pose et se lève
-                    // automatiquement selon les missions du mois (2 max).
+
                     Expanded(child: DropdownButtonFormField<String>(
                       initialValue: statut == 'limite' ? 'disponible' : statut,
                       dropdownColor: DzColors.card2,

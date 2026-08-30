@@ -1,11 +1,8 @@
 import 'dart:async';
-// ignore: avoid_web_libraries_in_flutter, deprecated_member_use
+
 import 'dart:html' as html;
 import 'dart:typed_data';
 
-/// Ouvre le sélecteur de fichier et retourne (octets, type MIME, nom du fichier).
-/// Retourne null si l'utilisateur annule (dans ce cas le Future peut ne jamais
-/// se terminer sur certains navigateurs — l'appelant ne doit pas bloquer dessus).
 Future<(Uint8List, String, String)?> pickImage() async {
   final input = html.FileUploadInputElement()..accept = 'image/*';
   input.click();

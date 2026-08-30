@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../services/api.dart';
 import '../theme.dart';
 import '../widgets/dzair_logo.dart';
 import 'shell.dart';
@@ -17,26 +16,13 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _loading = false;
 
   Future<void> _login() async {
-    final email = _email.text.trim();
-    final password = _password.text;
-    if (email.isEmpty || password.isEmpty) return;
     setState(() => _loading = true);
-    try {
-      await Api.login(email, password);
-      if (!mounted) return;
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const Shell()),
-      );
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(e.message),
-        backgroundColor: const Color(0xFF3A1512),
-        behavior: SnackBarBehavior.floating,
-      ));
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
+
+    await Future.delayed(const Duration(milliseconds: 500));
+    if (!mounted) return;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => const Shell()),
+    );
   }
 
   @override
@@ -52,9 +38,20 @@ class _LoginScreenState extends State<LoginScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 const Center(child: DzairLogo(size: 104)),
+                const SizedBox(height: 18),
                 const Center(child: DzairWordmark(fontSize: 30)),
                 const SizedBox(height: 6),
-                
+                const Center(
+                  child: Text(
+                    'Sourcing & micro-import',
+                    style: TextStyle(
+                      color: DzColors.mut,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 3,
+                    ),
+                  ),
+                ),
                 const SizedBox(height: 40),
                 TextField(
                   controller: _email,
@@ -80,7 +77,8 @@ class _LoginScreenState extends State<LoginScreen> {
                 const SizedBox(height: 22),
                 const Center(
                   child: Text(
-                    "Les comptes voyageurs sont créés par l’administrateur.",
+                    'Les comptes voyageurs sont créés par l’administrateur.\n'
+                    'Commerçant ? L’inscription client arrive bientôt.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: DzColors.mut, fontSize: 12, height: 1.6),
                   ),

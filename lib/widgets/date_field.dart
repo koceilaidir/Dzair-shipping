@@ -17,7 +17,6 @@ String dateFr(dynamic iso) {
 const _moisCourts = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin',
   'Juil', 'Août', 'Sep', 'Oct', 'Nov', 'Déc'];
 
-/// Champ date : ouvre le sélecteur Dzair (année + mois + jour cliquables).
 class DzDateField extends StatelessWidget {
   final String label;
   final DateTime? value;
@@ -104,7 +103,7 @@ class _DzPickerState extends State<_DzPicker> {
           padding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
           child: Column(mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            // Année : ‹ 2026 ›
+
             Row(mainAxisAlignment: MainAxisAlignment.center, children: [
               IconButton(
                 onPressed: _year > widget.minYear ? () => setState(() => _year--) : null,
@@ -118,7 +117,7 @@ class _DzPickerState extends State<_DzPicker> {
               ),
             ]),
             const SizedBox(height: 8),
-            // Mois : grille 4×3
+
             GridView.count(
               crossAxisCount: 4,
               shrinkWrap: true,
@@ -132,7 +131,7 @@ class _DzPickerState extends State<_DzPicker> {
               ],
             ),
             const Divider(color: DzColors.line, height: 24),
-            // Jour : grille 7 colonnes
+
             GridView.count(
               crossAxisCount: 7,
               shrinkWrap: true,

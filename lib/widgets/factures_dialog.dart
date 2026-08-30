@@ -3,14 +3,10 @@ import '../services/api.dart';
 import '../theme.dart';
 import '../widgets/date_field.dart';
 
-/// Répartition interactive des produits d'une valise en factures :
-/// sélectionner des produits → « Mettre dans la même facture » → « Ajouter une
-/// facture » tant qu'il reste des produits ; puis taux RMB → générer.
-/// Retourne true si des factures ont été générées.
 Future<bool> showFacturesDialog(BuildContext context, {
   required int missionId,
-  required List affectations,      // produits de la valise pas encore facturés
-  String? depart, String? retour,  // pour proposer des dates dans le séjour
+  required List affectations,
+  String? depart, String? retour,
 }) async {
   if (affectations.isEmpty) return false;
   final groupes = <_Groupe>[];
@@ -19,8 +15,6 @@ Future<bool> showFacturesDialog(BuildContext context, {
   bool saving = false;
   bool ok = false;
 
-  // Taux USD → RMB pré-rempli avec le cours OFFICIEL du jour (cache serveur 12 h) —
-  // modifiable à la main. Repli hors ligne : taux_officiel ÷ taux_rmb des réglages.
   try {
     final d = await Api.get('/reglages/taux-usd') as Map;
     final cny = (num.tryParse('${d['cny']}') ?? 0).toDouble();
@@ -40,8 +34,6 @@ Future<bool> showFacturesDialog(BuildContext context, {
   final dep = depart == null ? null : DateTime.tryParse(depart);
   final ret = retour == null ? null : DateTime.tryParse(retour);
 
-  // Date proposée = AUJOURD'HUI : la facture suit le paiement carte du jour.
-  // (Bornée au séjour si on est hors des dates de la mission.)
   DateTime dateProposee(int i, int total) {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
@@ -66,7 +58,7 @@ Future<bool> showFacturesDialog(BuildContext context, {
         if (selection.isEmpty) return;
         groupes.add(_Groupe(ids: {...selection}, date: dateProposee(groupes.length, groupes.length + 1)));
         selection.clear();
-        // Redistribue les dates proposées (une différente par facture, dans le séjour)
+
         for (var i = 0; i < groupes.length; i++) {
           if (!groupes[i].dateManuelle) groupes[i].date = dateProposee(i, groupes.length);
         }
@@ -135,7 +127,7 @@ Future<bool> showFacturesDialog(BuildContext context, {
               const SizedBox(height: 14),
               Flexible(
                 child: ListView(shrinkWrap: true, children: [
-                  // ---- Factures déjà composées ----
+
                   for (var i = 0; i < groupes.length; i++)
                     Container(
                       margin: const EdgeInsets.only(bottom: 10),
@@ -167,13 +159,13 @@ Future<bool> showFacturesDialog(BuildContext context, {
                           produitTile(a, checkable: false),
                       ]),
                     ),
-                  // ---- Produits restants à répartir ----
+
                   if (!tousRepartis) ...[
                     Padding(
                       padding: const EdgeInsets.only(bottom: 6, top: 4),
                       child: Row(children: [
                         Text(groupes.isEmpty ? 'PRODUITS DE LA VALISE' : 'RESTE À FACTURER',
-                            style: const TextStyle(color: DzColors.mut2, fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+                            style: const TextStyle(color: DzColors.mut, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1.2)),
                         const Spacer(),
                         TextButton(
                           onPressed: () => setSt(() => selection.addAll(restants.map((a) => a['id'] as int))),
