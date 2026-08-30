@@ -105,75 +105,65 @@ class _ShellState extends State<Shell> {
       final wide = c.maxWidth >= 950;
 
       if (!wide) {
-
         return Scaffold(
           appBar: AppBar(
             backgroundColor: DzColors.bg,
-            titleSpacing: 16,
+            titleSpacing: 0,
+            leading: Builder(
+              builder: (ctx) => IconButton(
+                tooltip: 'Menu',
+                onPressed: () => Scaffold.of(ctx).openDrawer(),
+                icon: const Icon(Icons.menu_rounded, color: DzColors.txt, size: 24),
+              ),
+            ),
             title: Row(children: [
-              const DzairLogo(size: 30),
+              const DzairLogo(size: 28),
               const SizedBox(width: 10),
-              Text(_items[_tab].$2,
-                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+              Expanded(
+                child: Text(_items[_tab].$2,
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+              ),
             ]),
             actions: [
               IconButton(
                 tooltip: 'Messages',
                 onPressed: () => setState(() => _tab = _tabMessages),
                 icon: _avecBadge(
-                    const Icon(Icons.notifications_none, color: DzColors.mut, size: 21)),
+                    const Icon(Icons.chat_bubble_outline, color: DzColors.mut, size: 20)),
               ),
-              const SizedBox(width: 6),
+              IconButton(
+                tooltip: 'Notifications',
+                onPressed: () => setState(() => _tab = 0),
+                icon: const Icon(Icons.notifications_none, color: DzColors.mut, size: 22),
+              ),
+              const SizedBox(width: 4),
             ],
           ),
+          drawer: Drawer(
+            width: 300,
+            backgroundColor: const Color(0xFF111113),
+            shape: const RoundedRectangleBorder(
+                borderRadius: BorderRadius.horizontal(right: Radius.circular(22))),
+            child: SafeArea(
+              child: Builder(
+                builder: (ctx) => _SideNav(
+                  tab: _tab,
+                  items: _items,
+                  nonLus: _nonLus,
+                  tabMessages: _tabMessages,
+                  largeur: double.infinity,
+                  fond: Colors.transparent,
+                  onClose: () => Navigator.pop(ctx),
+                  onTap: (i) {
+                    Navigator.pop(ctx);
+                    setState(() => _tab = i);
+                  },
+                ),
+              ),
+            ),
+          ),
           body: _content,
-
-          bottomNavigationBar: Builder(builder: (context) {
-            const principaux = [0, 1, 2, 3, 4];
-            final sel = principaux.indexOf(_tab);
-            return NavigationBar(
-              selectedIndex: sel < 0 ? 5 : sel,
-              onDestinationSelected: (i) async {
-                if (i < principaux.length) { setState(() => _tab = principaux[i]); return; }
-                final choix = await showModalBottomSheet<int>(
-                  context: context,
-                  backgroundColor: DzColors.card,
-                  shape: const RoundedRectangleBorder(
-                      borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-                  builder: (_) => SafeArea(child: Column(mainAxisSize: MainAxisSize.min, children: [
-                    const SizedBox(height: 10),
-                    for (var k = 0; k < _items.length; k++)
-                      if (!principaux.contains(k))
-                        ListTile(
-                          leading: Icon(_items[k].$1, color: k == _tab ? DzColors.lime : DzColors.mut),
-                          title: Text(_items[k].$2),
-                          trailing: k == _tabMessages && _nonLus > 0
-                              ? Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                                  decoration: BoxDecoration(
-                                    color: DzColors.lime,
-                                    borderRadius: BorderRadius.circular(99),
-                                  ),
-                                  child: Text('$_nonLus',
-                                      style: const TextStyle(color: DzColors.inkOnLime,
-                                          fontSize: 10.5, fontWeight: FontWeight.w800)),
-                                )
-                              : null,
-                          onTap: () => Navigator.pop(context, k),
-                        ),
-                    const SizedBox(height: 8),
-                  ])),
-                );
-                if (choix != null) setState(() => _tab = choix);
-              },
-              destinations: [
-                for (final k in principaux)
-                  NavigationDestination(icon: Icon(_items[k].$1), label: _items[k].$2.split(' ').first),
-                NavigationDestination(
-                    icon: _avecBadge(const Icon(Icons.more_horiz)), label: 'Plus'),
-              ],
-            );
-          }),
         );
       }
 
@@ -224,14 +214,18 @@ class _SideNav extends StatelessWidget {
   final int nonLus;
   final int tabMessages;
   final ValueChanged<int> onTap;
+  final double largeur;
+  final Color fond;
+  final VoidCallback? onClose;
   const _SideNav({required this.tab, required this.items, required this.nonLus,
-      required this.tabMessages, required this.onTap});
+      required this.tabMessages, required this.onTap,
+      this.largeur = 220, this.fond = DzColors.panel, this.onClose});
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 220,
-      color: DzColors.panel,
+      width: largeur,
+      color: fond,
       padding: const EdgeInsets.fromLTRB(14, 18, 14, 16),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
 
@@ -259,6 +253,12 @@ class _SideNav extends StatelessWidget {
                     style: const TextStyle(color: DzColors.mut, fontSize: 10.5)),
               ]),
             ),
+            if (onClose != null)
+              IconButton(
+                onPressed: onClose,
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.close_rounded, color: DzColors.mut, size: 19),
+              ),
           ]),
         ),
 
