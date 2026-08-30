@@ -15,6 +15,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _email = TextEditingController();
   final _password = TextEditingController();
   bool _loading = false;
+  bool _souvenir = true;
   String? _error;
 
   Future<void> _login() async {
@@ -26,7 +27,7 @@ class _LoginScreenState extends State<LoginScreen> {
     }
     setState(() { _loading = true; _error = null; });
     try {
-      await Api.login(email, password);
+      await Api.login(email, password, souvenir: _souvenir);
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => const Shell()),
@@ -71,13 +72,37 @@ class _LoginScreenState extends State<LoginScreen> {
                   onSubmitted: (_) => _login(),
                   decoration: const InputDecoration(labelText: 'Mot de passe'),
                 ),
+                const SizedBox(height: 6),
+                InkWell(
+                  borderRadius: BorderRadius.circular(10),
+                  onTap: () => setState(() => _souvenir = !_souvenir),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Row(children: [
+                      Container(
+                        width: 19, height: 19, alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: _souvenir ? DzColors.lime : DzColors.card2,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: _souvenir
+                            ? const Icon(Icons.check_rounded,
+                                size: 14, color: DzColors.inkOnLime)
+                            : null,
+                      ),
+                      const SizedBox(width: 9),
+                      const Text('Se souvenir de moi',
+                          style: TextStyle(color: DzColors.txt2, fontSize: 13)),
+                    ]),
+                  ),
+                ),
                 if (_error != null) ...[
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 8),
                   Text(_error!,
                       textAlign: TextAlign.center,
                       style: const TextStyle(color: DzColors.red, fontSize: 12.5)),
                 ],
-                const SizedBox(height: 20),
+                const SizedBox(height: 14),
                 FilledButton(
                   onPressed: _loading ? null : _login,
                   child: _loading

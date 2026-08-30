@@ -24,13 +24,14 @@ const loginLimiter = rateLimit({
 const loginSchema = z.object({
   email: z.string().email().max(200),
   password: z.string().min(1).max(200),
+  souvenir: z.boolean().optional().default(false),
 });
 
 authRouter.post('/login', loginLimiter, async (req, res) => {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Requête invalide.' });
 
-  const { email, password } = parsed.data;
+  const { email, password, souvenir } = parsed.data;
   const { rows } = await q(
     'SELECT id, email, password_hash, role, nom, actif FROM users WHERE email = $1',
     [email.toLowerCase()],
@@ -44,7 +45,7 @@ authRouter.post('/login', loginLimiter, async (req, res) => {
   const token = jwt.sign(
     { sub: user.id, role: user.role, nom: user.nom },
     SECRET,
-    { expiresIn: process.env.JWT_EXPIRES || '12h' },
+    { expiresIn: souvenir ? '30d' : (process.env.JWT_EXPIRES || '12h') },
   );
   res.json({ token, role: user.role, nom: user.nom });
 });

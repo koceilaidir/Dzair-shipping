@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'session_store.dart' as store;
 
 class ApiException implements Exception {
   final String message;
@@ -19,19 +20,42 @@ class Api {
   static String? nom;
   static bool get connecte => _token != null;
 
-  static Future<void> login(String email, String password) async {
+  static Future<void> login(String email, String password,
+      {bool souvenir = false}) async {
     final data = await _send('POST', '/auth/login',
-        body: {'email': email, 'password': password}, auth: false);
+        body: {'email': email, 'password': password, 'souvenir': souvenir},
+        auth: false);
     _token = data['token'] as String?;
     role = data['role'] as String?;
     nom = data['nom'] as String?;
     if (_token == null) throw ApiException('Réponse inattendue du serveur.');
+    if (souvenir) {
+      store.sauverSession(_token!, role ?? '', nom ?? '');
+    } else {
+      store.effacerSession();
+    }
+  }
+
+  static Future<bool> restaurerSession() async {
+    final s = store.lireSession();
+    if (s == null) return false;
+    _token = s.$1;
+    role = s.$2;
+    nom = s.$3;
+    try {
+      await get('/auth/moi');
+      return true;
+    } catch (_) {
+      logout();
+      return false;
+    }
   }
 
   static void logout() {
     _token = null;
     role = null;
     nom = null;
+    store.effacerSession();
   }
 
   static Future<dynamic> get(String path) => _send('GET', path);
