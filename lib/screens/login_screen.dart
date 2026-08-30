@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../services/api.dart';
 import '../theme.dart';
 import '../widgets/dzair_logo.dart';
 import 'shell.dart';
@@ -14,15 +15,32 @@ class _LoginScreenState extends State<LoginScreen> {
   final _email = TextEditingController();
   final _password = TextEditingController();
   bool _loading = false;
+  String? _error;
 
   Future<void> _login() async {
-    setState(() => _loading = true);
-
-    await Future.delayed(const Duration(milliseconds: 500));
-    if (!mounted) return;
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const Shell()),
-    );
+    final email = _email.text.trim();
+    final password = _password.text;
+    if (email.isEmpty || password.isEmpty) {
+      setState(() => _error = 'Entre ton email et ton mot de passe.');
+      return;
+    }
+    setState(() { _loading = true; _error = null; });
+    try {
+      await Api.login(email, password);
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const Shell()),
+      );
+    } on ApiException catch (e) {
+      if (mounted) setState(() { _loading = false; _error = e.message; });
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = 'Serveur injoignable — vérifie ta connexion.';
+        });
+      }
+    }
   }
 
   @override
@@ -40,18 +58,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 const Center(child: DzairLogo(size: 104)),
                 const SizedBox(height: 18),
                 const Center(child: DzairWordmark(fontSize: 30)),
-                const SizedBox(height: 6),
-                const Center(
-                  child: Text(
-                    'Sourcing & micro-import',
-                    style: TextStyle(
-                      color: DzColors.mut,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 3,
-                    ),
-                  ),
-                ),
                 const SizedBox(height: 40),
                 TextField(
                   controller: _email,
@@ -65,6 +71,12 @@ class _LoginScreenState extends State<LoginScreen> {
                   onSubmitted: (_) => _login(),
                   decoration: const InputDecoration(labelText: 'Mot de passe'),
                 ),
+                if (_error != null) ...[
+                  const SizedBox(height: 12),
+                  Text(_error!,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: DzColors.red, fontSize: 12.5)),
+                ],
                 const SizedBox(height: 20),
                 FilledButton(
                   onPressed: _loading ? null : _login,
@@ -73,15 +85,6 @@ class _LoginScreenState extends State<LoginScreen> {
                           height: 18, width: 18,
                           child: CircularProgressIndicator(strokeWidth: 2))
                       : const Text('Se connecter'),
-                ),
-                const SizedBox(height: 22),
-                const Center(
-                  child: Text(
-                    'Les comptes voyageurs sont créés par l’administrateur.\n'
-                    'Commerçant ? L’inscription client arrive bientôt.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: DzColors.mut, fontSize: 12, height: 1.6),
-                  ),
                 ),
               ],
             ),
