@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
 
 env:
-  DOMAIN: ""                                     # ← ton domaine ici (ex. dzairshipping.com)
+  DOMAIN: "dzairshipping.com"                                    # ← ton domaine ici (ex. dzairshipping.com)
   API_URL: "https://dzair-shipping-api.onrender.com/api"   # ← l'URL Render de l'API
 
 permissions:
