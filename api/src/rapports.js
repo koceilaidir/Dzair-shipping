@@ -4,7 +4,67 @@ import { requireAuth, requireRole } from './auth.js';
 import { getReglages } from './reglages.js';
 
 export const rapportsRouter = Router();
-rapportsRouter.use(requireAuth, requireRole('admin', 'voyageur'));
+
+rapportsRouter.get('/ma-finance', requireAuth, async (req, res) => {
+  const v = (await q('SELECT * FROM voyageurs WHERE user_id = $1', [req.user.sub])).rows[0];
+  if (!v) return res.status(403).json({ error: 'Aucune fiche voyageur liée à ce compte.' });
+
+  const missions = (await q(`
+    SELECT m.id, m.code, m.statut, m.depart, m.retour, m.cloture_date,
+           m.commission, m.primes, m.commission_versee,
+           COALESCE((SELECT SUM(usd * taux) FROM tranches_devises t
+                     WHERE t.mission_id = m.id AND t.motif = 'poche'), 0) AS poche_da,
+           COALESCE((SELECT SUM(usd * taux) FROM tranches_devises t
+                     WHERE t.mission_id = m.id AND t.motif = 'reste'), 0) AS reste_da
+    FROM missions m WHERE m.voyageur_id = $1 AND m.statut <> 'annulee'
+    ORDER BY m.depart DESC NULLS LAST, m.id DESC`, [v.id])).rows;
+
+  const remboursements = (await q(
+    `SELECT date, montant, devise, taux FROM remboursements_dette
+     WHERE voyageur_id = $1 ORDER BY date DESC, id DESC LIMIT 50`, [v.id])).rows;
+
+  const encours = missions.find((m) => m.statut !== 'cloturee');
+  const tranchesEncours = encours
+    ? (await q(
+        `SELECT usd, taux, devise, motif, source, created_at FROM tranches_devises
+         WHERE mission_id = $1 ORDER BY id`, [encours.id])).rows
+    : [];
+
+  let gainsTotal = 0, du = 0;
+  const parMois = {};
+  for (const m of missions) {
+    if (m.statut !== 'cloturee') continue;
+    const g = Number(m.commission ?? 0) + Number(m.primes ?? 0);
+    gainsTotal += g;
+    if (!m.commission_versee) du += g;
+    const mois = String(m.cloture_date || m.depart || '').slice(0, 7) || 'inconnu';
+    parMois[mois] = (parMois[mois] || 0) + g;
+  }
+
+  res.json({
+    voyageur: {
+      nom: v.nom, devise_compte: v.devise_compte, solde_devises: Number(v.solde_devises),
+      dette_active: v.dette_active, dette_montant: Number(v.dette_montant),
+      dette_rembourse: Number(v.dette_rembourse),
+    },
+    gains_total: Math.round(gainsTotal),
+    agence_me_doit: Math.round(du),
+    gains_par_mois: Object.entries(parMois).sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([mois, g]) => ({ mois, gain: Math.round(g) })),
+    missions: missions.map((m) => ({
+      id: m.id, code: m.code, statut: m.statut, depart: m.depart, retour: m.retour,
+      cloture_date: m.cloture_date,
+      gain: Math.round(Number(m.commission ?? 0) + Number(m.primes ?? 0)),
+      versee: !!m.commission_versee,
+      poche_da: Math.round(Number(m.poche_da)), reste_da: Math.round(Number(m.reste_da)),
+    })),
+    remboursements,
+    tranches_encours: tranchesEncours,
+    mission_encours: encours ? { id: encours.id, code: encours.code } : null,
+  });
+});
+
+rapportsRouter.use(requireAuth, requireRole('admin'));
 
 rapportsRouter.get('/activite', async (_req, res) => {
   const { rows } = await q(`
@@ -124,7 +184,7 @@ rapportsRouter.get('/finance', async (_req, res) => {
     carte: taxesCarteDe(m),
     demarches: Number(m.dem_cout) + Number(m.frais_visa || 0),
     autres: Number(m.autres) + Number(m.manques_da || 0) + Number(m.saisie_da || 0) +
-      (m.valise_sup ? Number(m.valise_sup_prix || 0) : 0),
+      Number(m.frais_taxi || 0) + (m.valise_sup ? Number(m.valise_sup_prix || 0) : 0),
   });
   const fraisDe = (m) => Object.values(fraisDetailDe(m)).reduce((s, v) => s + v, 0);
 

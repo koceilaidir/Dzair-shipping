@@ -7,6 +7,19 @@ import { requireAuth, requireRole } from './auth.js';
 export const facturesRouter = Router();
 facturesRouter.use(requireAuth, requireRole('admin', 'voyageur'));
 
+const adminSeul = (req, res, next) =>
+  req.user.role === 'admin' ? next()
+    : res.status(403).json({ error: 'Réservé aux admins.' });
+
+const maMission = async (req, missionId) => {
+  if (req.user.role === 'admin') return true;
+  const r = (await q(
+    `SELECT 1 FROM missions m JOIN voyageurs v ON v.id = m.voyageur_id
+     WHERE m.id = $1 AND v.user_id = $2`, [Number(missionId), req.user.sub])).rows[0];
+  return !!r;
+};
+
+
 const FONT = new URL('../fonts/NotoSansSC-Regular.otf', import.meta.url).pathname;
 const FONT_B = new URL('../fonts/NotoSansSC-Bold.otf', import.meta.url).pathname;
 
@@ -58,12 +71,13 @@ async function factureComplete(id) {
 facturesRouter.get('/', async (req, res) => {
   const mid = Number(req.query.mission);
   if (!mid) return res.status(400).json({ error: 'mission requise.' });
+  if (!(await maMission(req, mid))) return res.status(403).json({ error: 'Accès refusé.' });
   const { rows } = await q(
     `SELECT * FROM factures WHERE mission_id = $1 AND statut = 'emise' ORDER BY date, id`, [mid]);
   res.json(rows);
 });
 
-facturesRouter.post('/generer', async (req, res) => {
+facturesRouter.post('/generer', adminSeul, async (req, res) => {
   const p = z.object({
     mission_id: z.coerce.number().int(),
     taux_rmb: z.coerce.number().positive(),
@@ -144,7 +158,7 @@ facturesRouter.post('/generer', async (req, res) => {
   res.status(201).json(created);
 });
 
-facturesRouter.delete('/:id', async (req, res) => {
+facturesRouter.delete('/:id', adminSeul, async (req, res) => {
   const f = await factureComplete(Number(req.params.id));
   if (!f) return res.status(404).json({ error: 'Facture introuvable.' });
   const m = (await q('SELECT statut FROM missions WHERE id = $1', [f.mission_id])).rows[0];
@@ -224,11 +238,13 @@ function envoyerPdf(res, nom, dessine) {
 facturesRouter.get('/:id/pdf', async (req, res) => {
   const f = await factureComplete(Number(req.params.id));
   if (!f) return res.status(404).json({ error: 'Facture introuvable.' });
+  if (!(await maMission(req, f.mission_id))) return res.status(403).json({ error: 'Accès refusé.' });
   envoyerPdf(res, `facture-${f.mission_code}-${f.numero}.pdf`, (doc) => { doc.addPage(); dessiner(doc, f); });
 });
 
 facturesRouter.get('/mission/:id/pdf', async (req, res) => {
   const mid = Number(req.params.id);
+  if (!(await maMission(req, mid))) return res.status(403).json({ error: 'Accès refusé.' });
   const { rows } = await q(
     `SELECT f.*, m.code AS mission_code FROM factures f JOIN missions m ON m.id = f.mission_id
      WHERE f.mission_id = $1 AND f.statut = 'emise' ORDER BY f.date, f.id`, [mid]);

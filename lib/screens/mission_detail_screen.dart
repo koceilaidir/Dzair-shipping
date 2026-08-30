@@ -1037,10 +1037,6 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
         _ligne('Autres frais', '${_f(_n(m['autres']))} DA'),
         const Divider(color: DzColors.line, height: 18),
         _ligne('Total dépenses', '${_f(_frais)} DA', gras: true),
-        const SizedBox(height: 2),
-        const Text('La marchandise n’est pas une dépense : l’argent est déplacé — '
-            'seules ses taxes (douane + carte) comptent.',
-            style: TextStyle(color: DzColors.mut, fontSize: 10.5)),
       ]),
     );
   }

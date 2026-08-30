@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import '../services/api.dart';
 import '../theme.dart';
 import '../widgets/dzair_logo.dart';
+import '../widgets/profil_dialog.dart';
 import 'activite_screen.dart';
 import 'chambres_screen.dart';
 import 'creances_screen.dart';
@@ -12,6 +14,9 @@ import 'inventaire_screen.dart';
 import 'messages_screen.dart';
 import 'missions_screen.dart';
 import 'reglages_screen.dart';
+import 'voyageur_dashboard_screen.dart';
+import 'voyageur_finance_screen.dart';
+import 'voyageur_missions_screen.dart';
 import 'voyageurs_screen.dart';
 
 class Shell extends StatefulWidget {
@@ -25,8 +30,12 @@ class _ShellState extends State<Shell> {
   int _tab = 0;
   int _nonLus = 0;
   Timer? _timerNonLus;
+  Uint8List? _photo;
 
-  static const _tabMessages = 8;
+  bool get _estVoyageur => Api.role == 'voyageur';
+  int get _tabMessages => _estVoyageur ? 3 : 8;
+  int get _tabProfil => _estVoyageur ? 4 : -1;
+  List<(IconData, String)> get _itemsRole => _estVoyageur ? _itemsVoyageur : _items;
 
   static const _items = [
     (Icons.dashboard_outlined, 'Tableau de bord'),
@@ -41,11 +50,37 @@ class _ShellState extends State<Shell> {
     (Icons.settings_outlined, 'Réglages'),
   ];
 
+  static const _itemsVoyageur = [
+    (Icons.dashboard_outlined, 'Tableau de bord'),
+    (Icons.flight_takeoff_outlined, 'Mes missions'),
+    (Icons.bar_chart_outlined, 'Ma finance'),
+    (Icons.chat_bubble_outline, 'Messages'),
+    (Icons.settings_outlined, 'Réglages'),
+  ];
+
   @override
   void initState() {
     super.initState();
     _majNonLus();
+    _chargerPhoto();
     _timerNonLus = Timer.periodic(const Duration(seconds: 30), (_) => _majNonLus());
+  }
+
+  Future<void> _chargerPhoto() async {
+    try {
+      final b = await Api.getBytes('/auth/moi/photo');
+      if (mounted) setState(() => _photo = Uint8List.fromList(b));
+    } catch (_) {
+      if (mounted && _photo != null) setState(() => _photo = null);
+    }
+  }
+
+  Future<void> _ouvrirProfil() async {
+    final change = await montrerProfilDialog(context);
+    if (change && mounted) {
+      setState(() {});
+      _chargerPhoto();
+    }
   }
 
   @override
@@ -62,20 +97,40 @@ class _ShellState extends State<Shell> {
     } catch (_) {}
   }
 
-  Widget get _content => switch (_tab) {
-        0 => DashboardScreen(
+  Widget get _content {
+    if (_estVoyageur) {
+      return switch (_tab) {
+        0 => VoyageurDashboardScreen(
             onOuvrirMessages: () => setState(() => _tab = _tabMessages)),
-        1 => const MissionsScreen(),
-        2 => const VoyageursScreen(),
-        3 => const InventaireScreen(),
-        4 => const ChambresScreen(),
-        5 => const CreancesScreen(),
-        6 => const FinanceScreen(),
-        7 => const ActiviteScreen(),
-        8 => MessagesScreen(onLu: _majNonLus),
-        9 => const ReglagesScreen(),
-        _ => _ModulePlaceholder(title: _items[_tab].$2),
+        1 => const VoyageurMissionsScreen(),
+        2 => const VoyageurFinanceScreen(),
+        3 => MessagesScreen(onLu: _majNonLus),
+        _ => _ModulePlaceholder(title: _itemsRole[_tab].$2),
       };
+    }
+    return switch (_tab) {
+      0 => DashboardScreen(
+          onOuvrirMessages: () => setState(() => _tab = _tabMessages)),
+      1 => const MissionsScreen(),
+      2 => const VoyageursScreen(),
+      3 => const InventaireScreen(),
+      4 => const ChambresScreen(),
+      5 => const CreancesScreen(),
+      6 => const FinanceScreen(),
+      7 => const ActiviteScreen(),
+      8 => MessagesScreen(onLu: _majNonLus),
+      9 => const ReglagesScreen(),
+      _ => _ModulePlaceholder(title: _items[_tab].$2),
+    };
+  }
+
+  void _naviguer(int i) {
+    if (i == _tabProfil) {
+      _ouvrirProfil();
+    } else {
+      setState(() => _tab = i);
+    }
+  }
 
   Widget _avecBadge(Widget icone, {double topOffset = -4, double rightOffset = -6}) {
     if (_nonLus <= 0) return icone;
@@ -120,7 +175,7 @@ class _ShellState extends State<Shell> {
               const DzairLogo(size: 28),
               const SizedBox(width: 10),
               Expanded(
-                child: Text(_items[_tab].$2,
+                child: Text(_itemsRole[_tab].$2,
                     maxLines: 1, overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
               ),
@@ -149,15 +204,20 @@ class _ShellState extends State<Shell> {
               child: Builder(
                 builder: (ctx) => _SideNav(
                   tab: _tab,
-                  items: _items,
+                  items: _itemsRole,
                   nonLus: _nonLus,
                   tabMessages: _tabMessages,
                   largeur: double.infinity,
                   fond: Colors.transparent,
+                  photo: _photo,
+                  onProfil: () {
+                    Navigator.pop(ctx);
+                    _ouvrirProfil();
+                  },
                   onClose: () => Navigator.pop(ctx),
                   onTap: (i) {
                     Navigator.pop(ctx);
-                    setState(() => _tab = i);
+                    _naviguer(i);
                   },
                 ),
               ),
@@ -171,10 +231,12 @@ class _ShellState extends State<Shell> {
         body: Row(children: [
           _SideNav(
             tab: _tab,
-            items: _items,
+            items: _itemsRole,
             nonLus: _nonLus,
             tabMessages: _tabMessages,
-            onTap: (i) => setState(() => _tab = i),
+            photo: _photo,
+            onProfil: _ouvrirProfil,
+            onTap: _naviguer,
           ),
           Container(width: 1, color: DzColors.line),
           Expanded(
@@ -184,7 +246,7 @@ class _ShellState extends State<Shell> {
                 child: Row(children: [
                   Text('Dzair Shipping  /  ',
                       style: const TextStyle(color: DzColors.mut, fontSize: 12)),
-                  Text(_items[_tab].$2,
+                  Text(_itemsRole[_tab].$2,
                       style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
                   const Spacer(),
 
@@ -217,9 +279,12 @@ class _SideNav extends StatelessWidget {
   final double largeur;
   final Color fond;
   final VoidCallback? onClose;
+  final VoidCallback? onProfil;
+  final Uint8List? photo;
   const _SideNav({required this.tab, required this.items, required this.nonLus,
       required this.tabMessages, required this.onTap,
-      this.largeur = 220, this.fond = DzColors.panel, this.onClose});
+      this.largeur = 220, this.fond = DzColors.panel, this.onClose,
+      this.onProfil, this.photo});
 
   @override
   Widget build(BuildContext context) {
@@ -230,36 +295,52 @@ class _SideNav extends StatelessWidget {
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
 
         Padding(
-          padding: const EdgeInsets.only(left: 6, bottom: 18),
-          child: Row(children: [
-            Container(
-              width: 34, height: 34, alignment: Alignment.center,
-              decoration: const BoxDecoration(
-                color: DzColors.card2,
-                shape: BoxShape.circle,
+          padding: const EdgeInsets.only(bottom: 15),
+          child: Material(
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: onProfil,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(6, 4, 2, 4),
+                child: Row(children: [
+                  Container(
+                    width: 34, height: 34, alignment: Alignment.center,
+                    clipBehavior: Clip.antiAlias,
+                    decoration: const BoxDecoration(
+                      color: DzColors.card2,
+                      shape: BoxShape.circle,
+                    ),
+                    child: photo != null
+                        ? Image.memory(photo!, width: 34, height: 34, fit: BoxFit.cover)
+                        : Text((Api.nom ?? 'A').characters.first.toUpperCase(),
+                            style: const TextStyle(
+                                color: DzColors.lime, fontWeight: FontWeight.w800, fontSize: 14)),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(Api.nom ?? '',
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
+                      Text(Api.role == 'admin' ? 'Administrateur'
+                              : Api.role == 'voyageur' ? 'Voyageur' : (Api.role ?? ''),
+                          style: const TextStyle(color: DzColors.mut, fontSize: 10.5)),
+                    ]),
+                  ),
+                  if (onClose != null)
+                    IconButton(
+                      onPressed: onClose,
+                      visualDensity: VisualDensity.compact,
+                      icon: const Icon(Icons.close_rounded, color: DzColors.mut, size: 19),
+                    )
+                  else
+                    const Icon(Icons.edit_outlined, color: DzColors.mut2, size: 14),
+                ]),
               ),
-              child: Text((Api.nom ?? 'A').characters.first.toUpperCase(),
-                  style: const TextStyle(
-                      color: DzColors.lime, fontWeight: FontWeight.w800, fontSize: 14)),
             ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(Api.nom ?? '',
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
-                Text(Api.role == 'admin' ? 'Administrateur'
-                        : Api.role == 'voyageur' ? 'Voyageur' : (Api.role ?? ''),
-                    style: const TextStyle(color: DzColors.mut, fontSize: 10.5)),
-              ]),
-            ),
-            if (onClose != null)
-              IconButton(
-                onPressed: onClose,
-                visualDensity: VisualDensity.compact,
-                icon: const Icon(Icons.close_rounded, color: DzColors.mut, size: 19),
-              ),
-          ]),
+          ),
         ),
 
         Container(

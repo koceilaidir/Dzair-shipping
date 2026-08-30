@@ -9,7 +9,7 @@ const FONT = new URL('../fonts/NotoSansSC-Regular.otf', import.meta.url).pathnam
 const FONT_B = new URL('../fonts/NotoSansSC-Bold.otf', import.meta.url).pathname;
 
 export const inventaireRouter = Router();
-inventaireRouter.use(requireAuth, requireRole('admin', 'voyageur'));
+inventaireRouter.use(requireAuth, requireRole('admin'));
 
 const audit = (userId, action, entite, id, details) => q(
   `INSERT INTO audit_log (user_id, action, entite, entite_id, details) VALUES ($1,$2,$3,$4,$5)`,

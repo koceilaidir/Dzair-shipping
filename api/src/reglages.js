@@ -26,7 +26,7 @@ export async function getReglages() {
 }
 
 export const reglagesRouter = Router();
-reglagesRouter.use(requireAuth, requireRole('admin', 'voyageur'));
+reglagesRouter.use(requireAuth, requireRole('admin'));
 
 reglagesRouter.get('/', async (_req, res) => res.json(await getReglages()));
 

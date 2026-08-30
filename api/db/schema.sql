@@ -329,3 +329,9 @@ CREATE INDEX IF NOT EXISTS idx_missions_statut   ON missions(statut);
 CREATE INDEX IF NOT EXISTS idx_produits_mission  ON produits_mission(mission_id);
 CREATE INDEX IF NOT EXISTS idx_paiements_mission ON paiements(mission_id);
 CREATE INDEX IF NOT EXISTS idx_tranches_voyageur ON tranches_devises(voyageur_id);
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS photo      BYTEA;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_mime TEXT;
+
+ALTER TABLE missions ADD COLUMN IF NOT EXISTS frais_taxi        NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE missions ADD COLUMN IF NOT EXISTS commission_versee BOOLEAN NOT NULL DEFAULT FALSE;

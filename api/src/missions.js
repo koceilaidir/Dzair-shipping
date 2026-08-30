@@ -7,6 +7,51 @@ import { getReglages } from './reglages.js';
 export const missionsRouter = Router();
 missionsRouter.use(requireAuth, requireRole('admin', 'voyageur'));
 
+missionsRouter.use(async (req, res, next) => {
+  if (req.user.role !== 'voyageur') return next();
+  const v = (await q('SELECT id FROM voyageurs WHERE user_id = $1', [req.user.sub])).rows[0];
+  if (!v) return res.status(403).json({ error: 'Aucune fiche voyageur liée à ce compte.' });
+  req.voyageurId = v.id;
+  next();
+});
+
+const adminSeul = (req, res, next) =>
+  req.user.role === 'admin' ? next()
+    : res.status(403).json({ error: 'Réservé aux admins.' });
+
+const proprietaire = async (req, res, next) => {
+  if (req.user.role === 'admin') return next();
+  const m = (await q('SELECT voyageur_id FROM missions WHERE id = $1',
+    [Number(req.params.id)])).rows[0];
+  if (!m || m.voyageur_id !== req.voyageurId) {
+    return res.status(403).json({ error: 'Accès refusé.' });
+  }
+  next();
+};
+
+const missionVoyageur = (m) => ({
+  id: m.id, code: m.code, vol: m.vol, statut: m.statut,
+  depart: m.depart, retour: m.retour, jours: m.jours,
+  heure_depart: m.heure_depart, heure_arrivee: m.heure_arrivee,
+  heure_decollage: m.heure_decollage, duree_vol_min: m.duree_vol_min,
+  billet: m.billet, dem_type: m.dem_type, dem_cout: m.dem_cout, frais_visa: m.frais_visa,
+  kg_soute: m.kg_soute, cabine: m.cabine,
+  valise_close: m.valise_close, valise_sup: m.valise_sup, valise_sup_kg: m.valise_sup_kg,
+  bagage_main: m.bagage_main, bagage_main_kg: m.bagage_main_kg,
+  bagage_main_close: m.bagage_main_close,
+  check_depart: m.check_depart, check_retour: m.check_retour,
+  taxes_reelles: m.taxes_reelles, arrivee_note: m.arrivee_note, frais_taxi: m.frais_taxi,
+  commission: m.commission, primes: m.primes, commission_versee: m.commission_versee,
+  cloture_date: m.cloture_date, poche_mode: m.poche_mode,
+  voyageur_nom: m.voyageur_nom, kg_total: m.kg_total,
+});
+
+const affectationVoyageur = (a) => ({
+  id: a.id, produit: a.produit, quantite: a.quantite,
+  manquants: a.manquants, saisis: a.saisis,
+  prix_declare: a.prix_declare, emplacement: a.emplacement, poids_unit: a.poids_unit,
+});
+
 const missionBase = z.object({
   vol: z.string().max(60).optional().default(''),
   depart: z.string().max(10).optional().nullable(),
@@ -21,14 +66,30 @@ const missionBase = z.object({
   autres: z.coerce.number().nonnegative().default(0),
   objectif: z.coerce.number().nonnegative().default(20000),
   val_declaree: z.coerce.number().nonnegative().optional().nullable(),
+  heure_depart: z.string().max(5).optional().nullable(),
+  heure_arrivee: z.string().max(5).optional().nullable(),
 });
+
+const HHMM = /^\d{1,2}:\d{2}$/;
+const volDerive = (depart, hd, ha) => {
+  if (!depart || !hd || !HHMM.test(hd)) return { decollage: null, duree: null };
+  const decollage = `${depart}T${hd.padStart(5, '0')}:00+01:00`;
+  let duree = null;
+  if (ha && HHMM.test(ha)) {
+    const [h1, m1] = hd.split(':').map(Number);
+    const [h2, m2] = ha.split(':').map(Number);
+    duree = (h2 * 60 + m2) - (h1 * 60 + m1) - 7 * 60;
+    while (duree <= 0) duree += 24 * 60;
+  }
+  return { decollage, duree };
+};
 
 const frais = (m, pocheDA = 0, taxesCarteDA = 0, resteDA = 0) =>
   Number(m.billet) + Number(m.dem_cout) + Number(m.frais_visa || 0) +
   Math.max(0, (pocheDA > 0 ? pocheDA : Number(m.jours) * Number(m.budget_jour)) - resteDA) +
   Number(m.douane) + taxesCarteDA + Number(m.autres) + Number(m.manques_da || 0) +
   (m.valise_sup ? Number(m.valise_sup_prix || 0) : 0) +
-  Number(m.saisie_da || 0);
+  Number(m.saisie_da || 0) + Number(m.frais_taxi || 0);
 
 function tauxParallele(reglages, devise, secours) {
   const t = Number(devise === 'EUR' ? reglages.taux_parallele_eur : reglages.taux_parallele_usd);
@@ -115,7 +176,18 @@ function joursEntre(dep, ret) {
   return j > 0 && j <= 60 ? j : 1;
 }
 
-missionsRouter.get('/', async (_req, res) => {
+missionsRouter.get('/', async (req, res) => {
+  if (req.user.role === 'voyageur') {
+    const { rows } = await q(`
+      SELECT m.*, v.nom AS voyageur_nom,
+             COALESCE((SELECT SUM(a.quantite * l.poids_total / l.quantite)
+                       FROM affectations a JOIN bon_lignes l ON l.id = a.ligne_id
+                       WHERE a.mission_id = m.id), 0) AS kg_total
+      FROM missions m JOIN voyageurs v ON v.id = m.voyageur_id
+      WHERE m.voyageur_id = $1 AND m.statut <> 'annulee'
+      ORDER BY m.depart DESC NULLS LAST, m.id DESC`, [req.voyageurId]);
+    return res.json(rows.map(missionVoyageur));
+  }
   const { rows } = await q(`
     SELECT m.*, v.nom AS voyageur_nom, v.devise_compte,
            COALESCE((SELECT SUM(kg) FROM produits_mission p WHERE p.mission_id = m.id), 0)
@@ -163,7 +235,7 @@ missionsRouter.get('/', async (_req, res) => {
   }));
 });
 
-missionsRouter.get('/:id', async (req, res) => {
+missionsRouter.get('/:id', proprietaire, async (req, res) => {
   const id = Number(req.params.id);
   const m = (await q(
     `SELECT m.*, v.nom AS voyageur_nom, v.comm_mode AS v_comm_mode,
@@ -210,10 +282,20 @@ missionsRouter.get('/:id', async (req, res) => {
   }
   const photo = (await q(
     `SELECT 1 FROM mission_docs WHERE mission_id = $1 AND type = 'bon_douane' LIMIT 1`, [id])).rows[0];
+  if (req.user.role === 'voyageur') {
+    const kg = affectations.reduce(
+      (s, a) => s + Number(a.quantite) * Number(a.poids_unit || 0), 0);
+    return res.json({
+      ...missionVoyageur({ ...m, kg_total: kg }),
+      v_devise: m.v_devise, v_solde: m.v_solde,
+      tranches, affectations: affectations.map(affectationVoyageur),
+      arrivee_photo: !!photo,
+    });
+  }
   res.json({ ...m, produits, paiements, tranches, affectations, arrivee_photo: !!photo });
 });
 
-missionsRouter.post('/', async (req, res) => {
+missionsRouter.post('/', adminSeul, async (req, res) => {
   const parsed = missionBase.extend({
     voyageur_ids: z.array(z.coerce.number().int()).min(1),
   }).safeParse(req.body);
@@ -277,14 +359,16 @@ missionsRouter.post('/', async (req, res) => {
     const kgSoute = (Number(v.bagages) || 2) * 23;
     const seq = (await q('SELECT COUNT(*) AS n FROM missions')).rows[0].n;
     const code = 'MSN-' + String(Number(seq) + 1).padStart(3, '0');
+    const vd = volDerive(base.depart, base.heure_depart, base.heure_arrivee);
     const { rows } = await q(
       `INSERT INTO missions (voyageur_id, code, vol, depart, retour, jours, budget_jour,
          billet, dem_type, dem_cout, bea, douane, autres, objectif, kg_soute, val_declaree,
-         frais_visa, statut)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'encours') RETURNING *`,
+         frais_visa, heure_depart, heure_arrivee, heure_decollage, duree_vol_min, statut)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,'encours') RETURNING *`,
       [vid, code, base.vol, base.depart, base.retour, base.jours, base.budget_jour,
        base.billet, base.dem_type, base.dem_cout, base.bea, base.douane, base.autres,
-       base.objectif, kgSoute, base.val_declaree ?? null, fraisVisa]);
+       base.objectif, kgSoute, base.val_declaree ?? null, fraisVisa,
+       base.heure_depart ?? null, base.heure_arrivee ?? null, vd.decollage, vd.duree]);
     created.push(rows[0]);
     await q(`INSERT INTO audit_log (user_id, action, entite, entite_id, details)
              VALUES ($1,'create','mission',$2,$3)`,
@@ -301,7 +385,13 @@ missionsRouter.post('/', async (req, res) => {
   res.status(201).json(created);
 });
 
-missionsRouter.put('/:id', async (req, res) => {
+missionsRouter.put('/:id', proprietaire, async (req, res) => {
+  if (req.user.role !== 'admin') {
+    const cles = Object.keys(req.body || {});
+    if (!cles.length || cles.some((k) => k !== 'check_depart' && k !== 'check_retour')) {
+      return res.status(403).json({ error: 'Réservé aux admins.' });
+    }
+  }
   const id = Number(req.params.id);
   const parsed = missionBase.partial().extend({
     statut: z.enum(['planifiee', 'encours', 'annulee']).optional(),
@@ -339,6 +429,11 @@ missionsRouter.put('/:id', async (req, res) => {
   }
 
   m.poche_frais_carte = 0;
+  const vd = volDerive(
+    typeof m.depart === 'string' ? m.depart : m.depart?.toISOString?.().slice(0, 10),
+    m.heure_depart, m.heure_arrivee);
+  await q('UPDATE missions SET heure_decollage=$1, duree_vol_min=$2 WHERE id=$3',
+    [vd.decollage, vd.duree, id]);
   const { rows } = await q(
     `UPDATE missions SET vol=$1, depart=$2, retour=$3, jours=$4, budget_jour=$5, billet=$6,
        dem_type=$7, dem_cout=$8, bea=$9, douane=$10, autres=$11, objectif=$12,
@@ -381,7 +476,7 @@ missionsRouter.put('/:id', async (req, res) => {
     details.check = champs[0] === 'check_depart' ? 'départ' : 'retour';
   } else details.champs = champs;
   await audit(req.user.sub, 'update', 'mission', id, details);
-  res.json(rows[0]);
+  res.json(req.user.role === 'voyageur' ? missionVoyageur(rows[0]) : rows[0]);
 });
 
 async function purgeMission(id, code, userId) {
@@ -394,7 +489,7 @@ async function purgeMission(id, code, userId) {
     [userId, id, JSON.stringify({ code })]);
 }
 
-missionsRouter.delete('/:id', async (req, res) => {
+missionsRouter.delete('/:id', adminSeul, async (req, res) => {
   const id = Number(req.params.id);
   const m = (await q('SELECT statut, code FROM missions WHERE id = $1', [id])).rows[0];
   if (!m) return res.status(404).json({ error: 'Mission introuvable.' });
@@ -436,7 +531,7 @@ missionsRouter.delete('/:id', async (req, res) => {
   });
 });
 
-missionsRouter.post('/:id/produits', async (req, res) => {
+missionsRouter.post('/:id/produits', adminSeul, async (req, res) => {
   const id = Number(req.params.id);
   const parsed = z.object({
     nom: z.string().min(1).max(160),
@@ -459,7 +554,7 @@ missionsRouter.post('/:id/produits', async (req, res) => {
   res.status(201).json(rows[0]);
 });
 
-missionsRouter.delete('/:id/produits/:pid', async (req, res) => {
+missionsRouter.delete('/:id/produits/:pid', adminSeul, async (req, res) => {
   const cur = (await q('SELECT statut FROM missions WHERE id = $1',
     [Number(req.params.id)])).rows[0];
   if (!cur) return res.status(404).json({ error: 'Mission introuvable.' });
@@ -471,7 +566,7 @@ missionsRouter.delete('/:id/produits/:pid', async (req, res) => {
   res.json({ ok: true });
 });
 
-missionsRouter.post('/:id/cloture', async (req, res) => {
+missionsRouter.post('/:id/cloture', adminSeul, async (req, res) => {
   const id = Number(req.params.id);
   const parsed = z.object({
     depot: z.string().max(120).optional().default(''),
@@ -571,10 +666,11 @@ missionsRouter.post('/:id/cloture', async (req, res) => {
   res.json(rows[0]);
 });
 
-missionsRouter.post('/:id/arrivee', async (req, res) => {
+missionsRouter.post('/:id/arrivee', proprietaire, async (req, res) => {
   const id = Number(req.params.id);
   const parsed = z.object({
     taxes_reelles: z.coerce.number().nonnegative(),
+    frais_taxi: z.coerce.number().nonnegative().optional().default(0),
     note: z.string().max(1000).optional().default(''),
     saisis: z.array(z.object({
       affectation_id: z.coerce.number().int(),
@@ -602,15 +698,17 @@ missionsRouter.post('/:id/arrivee', async (req, res) => {
   }
   saisieDA = Math.round(saisieDA);
   const { rows } = await q(
-    `UPDATE missions SET taxes_reelles = $1, douane = $1, arrivee_note = $2, saisie_da = $3
-     WHERE id = $4 RETURNING *`,
-    [Math.round(d.taxes_reelles), d.note, saisieDA, id]);
+    `UPDATE missions SET taxes_reelles = $1, douane = $1, arrivee_note = $2, saisie_da = $3,
+       frais_taxi = $4
+     WHERE id = $5 RETURNING *`,
+    [Math.round(d.taxes_reelles), d.note, saisieDA, Math.round(d.frais_taxi), id]);
   await audit(req.user.sub, 'arrivee', 'mission', id,
-    { code: m.code, taxes_da: Math.round(d.taxes_reelles), saisis: nbSaisis, saisie_da: saisieDA });
-  res.json(rows[0]);
+    { code: m.code, taxes_da: Math.round(d.taxes_reelles), saisis: nbSaisis,
+      saisie_da: saisieDA, frais_taxi: Math.round(d.frais_taxi) });
+  res.json(req.user.role === 'voyageur' ? missionVoyageur(rows[0]) : rows[0]);
 });
 
-missionsRouter.post('/:id/arrivee/photo', async (req, res) => {
+missionsRouter.post('/:id/arrivee/photo', proprietaire, async (req, res) => {
   const id = Number(req.params.id);
   const parsed = z.object({
     data: z.string().min(1),
@@ -630,7 +728,7 @@ missionsRouter.post('/:id/arrivee/photo', async (req, res) => {
   res.status(201).json({ ok: true });
 });
 
-missionsRouter.get('/:id/arrivee/photo', async (req, res) => {
+missionsRouter.get('/:id/arrivee/photo', proprietaire, async (req, res) => {
   const doc = (await q(
     `SELECT mime, data FROM mission_docs WHERE mission_id = $1 AND type = 'bon_douane'
      ORDER BY id DESC LIMIT 1`, [Number(req.params.id)])).rows[0];
@@ -639,7 +737,7 @@ missionsRouter.get('/:id/arrivee/photo', async (req, res) => {
   res.send(doc.data);
 });
 
-missionsRouter.post('/:id/tranches', async (req, res) => {
+missionsRouter.post('/:id/tranches', proprietaire, async (req, res) => {
   const id = Number(req.params.id);
   const parsed = z.object({
     montant: z.coerce.number().positive(),
@@ -650,6 +748,9 @@ missionsRouter.post('/:id/tranches', async (req, res) => {
     motif: z.enum(['voyage', 'poche', 'reste']).default('voyage'),
   }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Tranche invalide.' });
+  if (req.user.role !== 'admin' && parsed.data.motif !== 'reste') {
+    return res.status(403).json({ error: 'Tu peux seulement déclarer ton argent restant.' });
+  }
   const m = (await q('SELECT voyageur_id, statut FROM missions WHERE id = $1', [id])).rows[0];
   if (!m) return res.status(404).json({ error: 'Mission introuvable.' });
   if (m.statut === 'cloturee') {
@@ -670,7 +771,7 @@ missionsRouter.post('/:id/tranches', async (req, res) => {
   res.status(201).json(rows[0]);
 });
 
-missionsRouter.delete('/:id/tranches/:tid', async (req, res) => {
+missionsRouter.delete('/:id/tranches/:tid', adminSeul, async (req, res) => {
   const id = Number(req.params.id);
   const cur = (await q('SELECT statut FROM missions WHERE id = $1', [id])).rows[0];
   if (!cur) return res.status(404).json({ error: 'Mission introuvable.' });
@@ -684,7 +785,7 @@ missionsRouter.delete('/:id/tranches/:tid', async (req, res) => {
   res.json({ ok: true });
 });
 
-missionsRouter.post('/:id/paiements', async (req, res) => {
+missionsRouter.post('/:id/paiements', adminSeul, async (req, res) => {
   const id = Number(req.params.id);
   const parsed = z.object({
     montant: z.coerce.number().positive(),
@@ -719,7 +820,7 @@ missionsRouter.post('/:id/paiements', async (req, res) => {
   res.status(201).json(rows[0]);
 });
 
-missionsRouter.delete('/:id/paiements/:pid', async (req, res) => {
+missionsRouter.delete('/:id/paiements/:pid', adminSeul, async (req, res) => {
   const id = Number(req.params.id);
   const del = (await q(
     'DELETE FROM paiements WHERE id = $1 AND mission_id = $2 RETURNING montant',

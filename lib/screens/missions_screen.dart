@@ -256,6 +256,8 @@ class _MissionsScreenState extends State<MissionsScreen> {
     final vol = TextEditingController(text: 'AH — CAN→ALG');
     final billet = TextEditingController(text: '110000');
     final objectif = TextEditingController(text: '20000');
+    final heureDepart = TextEditingController();
+    final heureArrivee = TextEditingController();
     DateTime depart = DateTime.now();
     DateTime? retour;
     String demType = 'multiple';
@@ -274,6 +276,10 @@ class _MissionsScreenState extends State<MissionsScreen> {
               'vol': vol.text.trim(),
               'depart': isoDate(depart),
               'retour': retour == null ? null : isoDate(retour!),
+              if (heureDepart.text.trim().isNotEmpty)
+                'heure_depart': heureDepart.text.trim(),
+              if (heureArrivee.text.trim().isNotEmpty)
+                'heure_arrivee': heureArrivee.text.trim(),
               'billet': num.tryParse(billet.text) ?? 0,
               'dem_type': demType,
               'objectif': num.tryParse(objectif.text) ?? 20000,
@@ -315,6 +321,21 @@ class _MissionsScreenState extends State<MissionsScreen> {
                         onChanged: (d) => setSt(() => retour = d))),
                   ]),
                   const SizedBox(height: 16),
+                  Row(children: [
+                    Expanded(child: TextField(controller: heureDepart,
+                        keyboardType: TextInputType.datetime,
+                        decoration: const InputDecoration(
+                            labelText: 'Décollage (HH:mm)', hintText: '16:00'))),
+                    const SizedBox(width: 12),
+                    Expanded(child: TextField(controller: heureArrivee,
+                        keyboardType: TextInputType.datetime,
+                        decoration: const InputDecoration(
+                            labelText: 'Atterrissage (HH:mm)', hintText: '06:30'))),
+                  ]),
+                  const SizedBox(height: 6),
+                  const Text('Heures locales — elles alimentent l’avion de suivi du vol sur le tableau de bord.',
+                      style: TextStyle(color: DzColors.mut, fontSize: 10.5)),
+                  const SizedBox(height: 12),
                   Row(children: [
                     Expanded(child: TextField(controller: billet,
                         keyboardType: TextInputType.number,

@@ -43,7 +43,9 @@ class Api {
     role = s.$2;
     nom = s.$3;
     try {
-      await get('/auth/moi');
+      final moi = await get('/auth/moi') as Map;
+      role = '${moi['role'] ?? role}';
+      nom = '${moi['nom'] ?? nom}';
       return true;
     } catch (_) {
       logout();

@@ -91,7 +91,7 @@ async function creerCompteVoyageur(email, nom) {
   return { user_id: u.id, mot_de_passe_initial: mdp };
 }
 
-app.get('/api/voyageurs', requireAuth, requireRole('admin', 'voyageur'), async (_req, res) => {
+app.get('/api/voyageurs', requireAuth, requireRole('admin'), async (_req, res) => {
 
   const { rows } = await q(`
     SELECT v.*, (SELECT email FROM users u WHERE u.id = v.user_id) AS email,
@@ -110,7 +110,7 @@ app.get('/api/voyageurs', requireAuth, requireRole('admin', 'voyageur'), async (
   res.json(rows.map((r) => ({ ...r, statut_dispo: r.statut_effectif })));
 });
 
-app.post('/api/voyageurs', requireAuth, requireRole('admin', 'voyageur'), async (req, res) => {
+app.post('/api/voyageurs', requireAuth, requireRole('admin'), async (req, res) => {
   const parsed = voyageurSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues });
   const v = parsed.data;
@@ -141,7 +141,7 @@ app.post('/api/voyageurs', requireAuth, requireRole('admin', 'voyageur'), async 
     mot_de_passe_initial: compte?.mot_de_passe_initial ?? null });
 });
 
-app.put('/api/voyageurs/:id', requireAuth, requireRole('admin', 'voyageur'), async (req, res) => {
+app.put('/api/voyageurs/:id', requireAuth, requireRole('admin'), async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'Identifiant invalide.' });
   const parsed = voyageurSchema.partial().safeParse(req.body);
@@ -186,7 +186,7 @@ app.put('/api/voyageurs/:id', requireAuth, requireRole('admin', 'voyageur'), asy
   res.json({ ...rows[0], mot_de_passe_initial: compte?.mot_de_passe_initial ?? null });
 });
 
-app.delete('/api/voyageurs/:id', requireAuth, requireRole('admin', 'voyageur'), async (req, res) => {
+app.delete('/api/voyageurs/:id', requireAuth, requireRole('admin'), async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'Identifiant invalide.' });
   const n = (await q('SELECT COUNT(*) AS n FROM missions WHERE voyageur_id = $1', [id])).rows[0].n;

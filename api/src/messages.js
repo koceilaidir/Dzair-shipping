@@ -6,6 +6,30 @@ import { requireAuth } from './auth.js';
 export const messagesRouter = Router();
 messagesRouter.use(requireAuth);
 
+const CONTACTS_AUTORISES = `
+  u.actif = TRUE AND u.id <> $1 AND (
+    $2 = 'admin'
+    OR u.role = 'admin'
+    OR EXISTS (
+      SELECT 1
+      FROM voyageurs vm
+      JOIN missions mm ON mm.voyageur_id = vm.id AND mm.statut <> 'annulee'
+      JOIN voyageurs vu ON vu.user_id = u.id
+      JOIN missions mu ON mu.voyageur_id = vu.id AND mu.statut <> 'annulee'
+      WHERE vm.user_id = $1
+        AND mm.depart IS NOT NULL AND mu.depart IS NOT NULL
+        AND mm.depart <= COALESCE(mu.retour, mu.depart)
+        AND mu.depart <= COALESCE(mm.retour, mm.depart)
+    )
+  )`;
+
+const peutContacter = async (moi, role, autre) => {
+  const r = (await q(
+    `SELECT 1 FROM users u WHERE u.id = $3 AND ${CONTACTS_AUTORISES}`,
+    [moi, role, autre])).rows[0];
+  return !!r;
+};
+
 messagesRouter.get('/contacts', async (req, res) => {
   const moi = req.user.sub;
   const { rows } = await q(`
@@ -24,8 +48,8 @@ messagesRouter.get('/contacts', async (req, res) => {
       SELECT de_user, COUNT(*) AS n FROM messages
       WHERE a_user = $1 AND lu = FALSE GROUP BY de_user
     ) nl ON nl.de_user = u.id
-    WHERE u.actif = TRUE AND u.id <> $1
-    ORDER BY d.created_at DESC NULLS LAST, u.nom`, [moi]);
+    WHERE ${CONTACTS_AUTORISES}
+    ORDER BY d.created_at DESC NULLS LAST, u.nom`, [moi, req.user.role]);
   res.json(rows.map((r) => ({
     id: r.id, nom: r.nom, role: r.role,
     dernier_texte: r.dernier_texte, dernier_date: r.dernier_date,
@@ -56,6 +80,10 @@ messagesRouter.post('/avec/:userId', async (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: 'Message vide ou trop long.' });
   const dest = (await q('SELECT id FROM users WHERE id = $1 AND actif = TRUE', [autre])).rows[0];
   if (!dest) return res.status(404).json({ error: 'Destinataire introuvable.' });
+  if (!(await peutContacter(req.user.sub, req.user.role, autre))) {
+    return res.status(403).json({
+      error: 'Tu peux écrire aux admins et aux voyageurs avec qui tu as partagé un séjour.' });
+  }
   const { rows } = await q(
     `INSERT INTO messages (de_user, a_user, texte) VALUES ($1,$2,$3)
      RETURNING id, texte, created_at`,
