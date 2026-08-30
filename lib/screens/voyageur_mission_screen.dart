@@ -625,8 +625,10 @@ class _FormArriveeState extends State<_FormArrivee> {
   Future<void> _prendrePhoto() async {
     final img = await pickImage();
     if (img == null || !mounted) return;
+    final (bytes, mime) = await compresserImage(img.$1, img.$2, maxCote: 1600);
+    if (!mounted) return;
     setState(() {
-      _photo = (img.$1, img.$2);
+      _photo = (bytes, mime);
       _photoNom = img.$3;
     });
   }

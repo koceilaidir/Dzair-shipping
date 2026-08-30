@@ -74,13 +74,16 @@ class _ProfilDialogState extends State<_ProfilDialog> {
   Future<void> _choisirPhoto() async {
     final img = await pickImage();
     if (img == null || !mounted) return;
-    if (img.$1.length > 3000000) {
-      _snack('Photo trop lourde (3 Mo max).');
+    final (bytes, mime) =
+        await compresserImage(img.$1, img.$2, maxCote: 512, qualite: 0.85);
+    if (!mounted) return;
+    if (bytes.length > 3000000) {
+      _snack('Photo trop lourde même compressée — choisis-en une autre.');
       return;
     }
     setState(() {
-      _photo = img.$1;
-      _photoMime = img.$2;
+      _photo = Uint8List.fromList(bytes);
+      _photoMime = mime;
       _photoChangee = true;
     });
   }

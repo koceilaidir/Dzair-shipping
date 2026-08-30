@@ -1821,7 +1821,10 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
                       onPressed: () async {
                         try {
                           final p = await pickImage();
-                          if (p != null) setSt(() => photo = p);
+                          if (p != null) {
+                            final (b, m2) = await compresserImage(p.$1, p.$2, maxCote: 1600);
+                            setSt(() => photo = (b, m2, p.$3));
+                          }
                         } catch (e) { if (ctx.mounted) ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text('$e'))); }
                       },
                       icon: const Icon(Icons.photo_camera_outlined, size: 15),
