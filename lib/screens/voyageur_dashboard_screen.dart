@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/api.dart';
 import '../theme.dart';
+import '../widgets/avatar_user.dart';
 import '../widgets/charts.dart';
 import 'voyageur_mission_screen.dart';
 
@@ -462,15 +463,8 @@ class _VoyageurDashboardScreenState extends State<VoyageurDashboardScreen> {
               decoration: i == 0 ? null : const BoxDecoration(
                   border: Border(top: BorderSide(color: DzColors.line))),
               child: Row(children: [
-                Container(
-                  width: 30, height: 30, alignment: Alignment.center,
-                  decoration: const BoxDecoration(
-                      color: DzColors.card2, shape: BoxShape.circle),
-                  child: Text('${fils[i]['nom']}'.isNotEmpty
-                          ? '${fils[i]['nom']}'[0].toUpperCase() : '?',
-                      style: const TextStyle(color: DzColors.lime,
-                          fontSize: 12, fontWeight: FontWeight.w800)),
-                ),
+                AvatarUser(userId: fils[i]['id'] as int?,
+                    nom: '${fils[i]['nom']}', taille: 30),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

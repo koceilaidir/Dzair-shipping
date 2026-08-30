@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/api.dart';
 import '../theme.dart';
+import '../widgets/avatar_user.dart';
 
 class MessagesScreen extends StatefulWidget {
   final VoidCallback? onLu;
@@ -168,13 +169,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                       child: Row(children: [
-                        CircleAvatar(
-                          radius: 19,
-                          backgroundColor: DzColors.card2,
-                          child: Text('${c['nom']}'.isNotEmpty ? '${c['nom']}'[0].toUpperCase() : '?',
-                              style: const TextStyle(color: DzColors.lime,
-                                  fontWeight: FontWeight.w800)),
-                        ),
+                        AvatarUser(userId: c['id'] as int?, nom: '${c['nom']}', taille: 38),
                         const SizedBox(width: 11),
                         Expanded(
                           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -242,12 +237,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
           child: Row(children: [
-            CircleAvatar(
-              radius: 16, backgroundColor: DzColors.card2,
-              child: Text('${c['nom']}'.isNotEmpty ? '${c['nom']}'[0].toUpperCase() : '?',
-                  style: const TextStyle(color: DzColors.lime, fontSize: 13,
-                      fontWeight: FontWeight.w800)),
-            ),
+            AvatarUser(userId: c['id'] as int?, nom: '${c['nom']}', taille: 32),
             const SizedBox(width: 10),
             Text('${c['nom']}', style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700)),
             const SizedBox(width: 8),
