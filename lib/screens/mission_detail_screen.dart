@@ -1386,7 +1386,7 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
           if (_formLibre) ...[
             const SizedBox(height: 8),
             Row(children: [
-              Expanded(flex: 4, child: TextField(controller: _nom,
+              Expanded(flex: 4, child: TextField(textCapitalization: TextCapitalization.sentences, controller: _nom,
                   decoration: const InputDecoration(labelText: 'Produit', isDense: true))),
               const SizedBox(width: 8),
               Expanded(flex: 2, child: TextField(controller: _kg, keyboardType: TextInputType.number,
@@ -1832,7 +1832,7 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
                     ),
                   ]),
                   const SizedBox(height: 10),
-                  TextField(controller: note,
+                  TextField(textCapitalization: TextCapitalization.sentences, controller: note,
                       decoration: const InputDecoration(labelText: 'Note (contrôle, remarques…)')),
                   const SizedBox(height: 12),
                   if (!montrerSaisie)
@@ -2350,7 +2350,7 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
                       'factures réelles, reste des devises reporté sur son compte.',
                       style: const TextStyle(color: DzColors.mut, fontSize: 11.5)),
                   const SizedBox(height: 16),
-                  TextField(controller: depot, decoration: const InputDecoration(labelText: 'Dépôt / acheteur')),
+                  TextField(textCapitalization: TextCapitalization.words, controller: depot, decoration: const InputDecoration(labelText: 'Dépôt / acheteur')),
                   const SizedBox(height: 14),
                   TextField(controller: factures, keyboardType: TextInputType.number,
                       decoration: InputDecoration(labelText: 'Total des factures (${_sym(_devise)})')),
@@ -2392,7 +2392,7 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
                   TextField(controller: primes, keyboardType: TextInputType.number,
                       decoration: const InputDecoration(labelText: 'Primes économies (DA)')),
                   const SizedBox(height: 14),
-                  TextField(controller: invendus,
+                  TextField(textCapitalization: TextCapitalization.sentences, controller: invendus,
                       decoration: const InputDecoration(labelText: 'Invendus / prix renégociés')),
                   if (_aff.isNotEmpty) ...[
                     const SizedBox(height: 18),

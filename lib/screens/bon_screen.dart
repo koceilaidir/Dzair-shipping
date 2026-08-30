@@ -138,7 +138,7 @@ class _BonScreenState extends State<BonScreen> {
                   ]),
                 )
               : Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                  TextField(
+                  TextField(textCapitalization: TextCapitalization.words, 
                     controller: _recherche, onChanged: (_) => setState(() {}),
                     decoration: const InputDecoration(labelText: 'Nom ou n° de la chambre',
                         prefixIcon: Icon(Icons.search, size: 18)),
@@ -203,7 +203,7 @@ class _BonScreenState extends State<BonScreen> {
           Row(children: [
             Expanded(child: DzDateField(label: 'Date', value: _date, onChanged: (d) => setState(() => _date = d))),
             const SizedBox(width: 12),
-            Expanded(flex: 2, child: TextField(controller: _note,
+            Expanded(flex: 2, child: TextField(textCapitalization: TextCapitalization.sentences, controller: _note,
                 decoration: const InputDecoration(labelText: 'Note (facultatif)'))),
           ]),
           const SizedBox(height: 12),
@@ -273,7 +273,7 @@ class _BonScreenState extends State<BonScreen> {
                 decoration: BoxDecoration(color: DzColors.card, borderRadius: BorderRadius.circular(6)),
                 child: Text('${i + 1}', style: const TextStyle(color: DzColors.mut, fontSize: 10.5, fontWeight: FontWeight.w700))),
             const SizedBox(width: 8),
-            Expanded(flex: 4, child: TextField(controller: l.produit, onChanged: (_) => onChange(),
+            Expanded(flex: 4, child: TextField(textCapitalization: TextCapitalization.sentences, controller: l.produit, onChanged: (_) => onChange(),
                 decoration: const InputDecoration(labelText: 'Produit', isDense: true))),
             const SizedBox(width: 8),
             Expanded(flex: 2, child: TextField(controller: l.qte, keyboardType: TextInputType.number, onChanged: (_) => onChange(),

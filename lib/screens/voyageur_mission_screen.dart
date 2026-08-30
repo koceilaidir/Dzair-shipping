@@ -683,7 +683,7 @@ class _FormArriveeState extends State<_FormArrivee> {
             decoration: const InputDecoration(labelText: 'Frais de taxi (DA)'))),
       ]),
       const SizedBox(height: 10),
-      TextField(controller: _note,
+      TextField(textCapitalization: TextCapitalization.sentences, controller: _note,
           decoration: const InputDecoration(labelText: 'Note (facultatif)')),
       const SizedBox(height: 12),
       if (_restes.isNotEmpty) ...[

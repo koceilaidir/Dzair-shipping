@@ -187,7 +187,7 @@ class _ProfilDialogState extends State<_ProfilDialog> {
                             ),
                           ),
                           const SizedBox(height: 18),
-                          TextField(controller: _nom,
+                          TextField(textCapitalization: TextCapitalization.words, controller: _nom,
                               decoration: const InputDecoration(labelText: 'Nom complet')),
                           const SizedBox(height: 10),
                           TextField(controller: _email,
@@ -201,10 +201,10 @@ class _ProfilDialogState extends State<_ProfilDialog> {
                           if (_moi!['est_voyageur'] == true) ...[
                             const SizedBox(height: 10),
                             Row(children: [
-                              Expanded(flex: 3, child: TextField(controller: _adresse,
+                              Expanded(flex: 3, child: TextField(textCapitalization: TextCapitalization.sentences, controller: _adresse,
                                   decoration: const InputDecoration(labelText: 'Adresse'))),
                               const SizedBox(width: 10),
-                              Expanded(flex: 2, child: TextField(controller: _wilaya,
+                              Expanded(flex: 2, child: TextField(textCapitalization: TextCapitalization.words, controller: _wilaya,
                                   decoration: const InputDecoration(labelText: 'Wilaya'))),
                             ]),
                           ],

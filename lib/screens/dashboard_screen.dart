@@ -742,7 +742,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         const SizedBox(height: 8),
         Row(children: [
           Expanded(
-            child: TextField(
+            child: TextField(textCapitalization: TextCapitalization.sentences, 
               controller: _reponse,
               style: const TextStyle(fontSize: 12.5),
               textInputAction: TextInputAction.send,

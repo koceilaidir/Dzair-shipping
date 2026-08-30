@@ -22,6 +22,25 @@ Future<(Uint8List, String, String)?> pickImage() async {
   return (bytes, f.type.isNotEmpty ? f.type : 'image/jpeg', f.name);
 }
 
+Future<(Uint8List, String, String)?> pickFichier() async {
+  final input = html.FileUploadInputElement()..accept = 'image/*,application/pdf';
+  input.click();
+  await input.onChange.first;
+  final files = input.files;
+  if (files == null || files.isEmpty) return null;
+  final f = files.first;
+  final reader = html.FileReader();
+  reader.readAsArrayBuffer(f);
+  await reader.onLoad.first;
+  final res = reader.result;
+  final bytes = res is Uint8List
+      ? res
+      : res is ByteBuffer
+          ? Uint8List.view(res)
+          : Uint8List.fromList((res as List).cast<int>());
+  return (bytes, f.type.isNotEmpty ? f.type : 'application/octet-stream', f.name);
+}
+
 Future<(Uint8List, String)> compresserImage(Uint8List bytes, String mime,
     {int maxCote = 1600, double qualite = 0.82}) async {
   try {

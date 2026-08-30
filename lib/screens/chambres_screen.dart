@@ -188,10 +188,10 @@ Future<Map?> showChambreForm(BuildContext context, {Map? chambre, VoidCallback? 
                     style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
                 const SizedBox(height: 16),
                 Row(children: [
-                  Expanded(flex: 3, child: TextField(controller: nom,
+                  Expanded(flex: 3, child: TextField(textCapitalization: TextCapitalization.words, controller: nom,
                       decoration: const InputDecoration(labelText: 'Nom / n° de la chambre'))),
                   const SizedBox(width: 12),
-                  Expanded(flex: 2, child: TextField(controller: ville,
+                  Expanded(flex: 2, child: TextField(textCapitalization: TextCapitalization.words, controller: ville,
                       decoration: const InputDecoration(labelText: 'Ville'))),
                 ]),
                 const SizedBox(height: 18),
@@ -199,10 +199,10 @@ Future<Map?> showChambreForm(BuildContext context, {Map? chambre, VoidCallback? 
                     fontWeight: FontWeight.w700, letterSpacing: 1.2)),
                 const SizedBox(height: 8),
                 Row(children: [
-                  Expanded(flex: 2, child: TextField(controller: wilaya,
+                  Expanded(flex: 2, child: TextField(textCapitalization: TextCapitalization.words, controller: wilaya,
                       decoration: const InputDecoration(labelText: 'Wilaya'))),
                   const SizedBox(width: 12),
-                  Expanded(flex: 3, child: TextField(controller: adresse,
+                  Expanded(flex: 3, child: TextField(textCapitalization: TextCapitalization.sentences, controller: adresse,
                       decoration: const InputDecoration(labelText: 'Adresse du dépôt'))),
                 ]),
                 const SizedBox(height: 18),
@@ -218,7 +218,7 @@ Future<Map?> showChambreForm(BuildContext context, {Map? chambre, VoidCallback? 
                 ]),
                 for (var i = 0; i < contacts.length; i++) ...[
                   Row(children: [
-                    Expanded(flex: 3, child: TextField(controller: contacts[i].$1,
+                    Expanded(flex: 3, child: TextField(textCapitalization: TextCapitalization.words, controller: contacts[i].$1,
                         decoration: const InputDecoration(labelText: 'Nom', isDense: true))),
                     const SizedBox(width: 8),
                     Expanded(flex: 3, child: TextField(controller: contacts[i].$2,
@@ -252,7 +252,7 @@ Future<Map?> showChambreForm(BuildContext context, {Map? chambre, VoidCallback? 
                   const SizedBox(height: 10),
                 ],
                 const SizedBox(height: 6),
-                TextField(controller: note, maxLines: 2,
+                TextField(textCapitalization: TextCapitalization.sentences, controller: note, maxLines: 2,
                     decoration: const InputDecoration(labelText: 'Note (horaires, spécialité, remarques…)')),
                 const SizedBox(height: 18),
                 FilledButton(

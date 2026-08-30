@@ -304,7 +304,7 @@ class _VoyageurDetailScreenState extends State<VoyageurDetailScreen> {
                   const Text('Modifier le voyageur',
                       style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
                   const SizedBox(height: 18),
-                  TextField(controller: nom, decoration: const InputDecoration(labelText: 'Nom complet')),
+                  TextField(textCapitalization: TextCapitalization.words, controller: nom, decoration: const InputDecoration(labelText: 'Nom complet')),
                   const SizedBox(height: 16),
                   const Text('IDENTITÉ CLIENT (FACTURES)', style: TextStyle(color: DzColors.mut, fontSize: 11,
                       fontWeight: FontWeight.w700, letterSpacing: 1.2)),
@@ -313,15 +313,15 @@ class _VoyageurDetailScreenState extends State<VoyageurDetailScreen> {
                       decoration: const InputDecoration(labelText: 'Nom et prénom (latin, comme sur le passeport)')),
                   const SizedBox(height: 12),
                   Row(children: [
-                    Expanded(flex: 3, child: TextField(controller: adresse,
+                    Expanded(flex: 3, child: TextField(textCapitalization: TextCapitalization.sentences, controller: adresse,
                         decoration: const InputDecoration(labelText: 'Adresse en Algérie (latin)'))),
                     const SizedBox(width: 12),
-                    Expanded(flex: 2, child: TextField(controller: wilaya,
+                    Expanded(flex: 2, child: TextField(textCapitalization: TextCapitalization.words, controller: wilaya,
                         decoration: const InputDecoration(labelText: 'Wilaya'))),
                   ]),
                   const SizedBox(height: 16),
                   Row(children: [
-                    Expanded(child: TextField(controller: tel,
+                    Expanded(child: TextField(keyboardType: TextInputType.phone, controller: tel,
                         decoration: const InputDecoration(labelText: 'Téléphone'))),
                     const SizedBox(width: 12),
 

@@ -308,7 +308,7 @@ class _MissionsScreenState extends State<MissionsScreen> {
                   const Text('Nouvelle mission',
                       style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
                   const SizedBox(height: 18),
-                  TextField(controller: vol,
+                  TextField(textCapitalization: TextCapitalization.characters, controller: vol,
                       decoration: const InputDecoration(labelText: 'N° de vol / billet')),
                   const SizedBox(height: 16),
                   Row(children: [

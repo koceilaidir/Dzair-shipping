@@ -90,7 +90,7 @@ Future<bool> montrerEncaisserDialog(
               chip('en_ligne', 'En ligne', 'moyen'),
             ]),
             const SizedBox(height: 12),
-            TextField(controller: note, decoration: const InputDecoration(labelText: 'Note')),
+            TextField(textCapitalization: TextCapitalization.sentences, controller: note, decoration: const InputDecoration(labelText: 'Note')),
           ]),
         ),
         actions: [
