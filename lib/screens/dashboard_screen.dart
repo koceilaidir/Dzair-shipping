@@ -3,6 +3,7 @@ import '../services/api.dart';
 import '../theme.dart';
 import '../widgets/avatar_user.dart';
 import '../widgets/charts.dart';
+import '../widgets/depense_dialog.dart';
 import 'mission_detail_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -21,6 +22,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   List? _activite;
   List? _voyageurs;
   List? _contacts;
+  Map? _sejour;
+  List? _admins;
+  Map? _reglages;
   bool _loaded = false;
 
   int _periodeJours = 30;
@@ -52,6 +56,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
       tente<List>(Api.get('/rapports/activite')),
       tente<List>(Api.get('/voyageurs')),
       tente<List>(Api.get('/messages/contacts')),
+      tente<Map>(Api.get('/sejours/en-cours')),
+      tente<List>(Api.get('/admins')),
+      tente<Map>(Api.get('/reglages')),
     ]);
     if (!mounted) return;
     setState(() {
@@ -62,6 +69,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _activite = res[4] as List?;
       _voyageurs = res[5] as List?;
       _contacts = res[6] as List?;
+      _sejour = res[7] as Map?;
+      _admins = res[8] as List?;
+      _reglages = res[9] as Map?;
       _loaded = true;
     });
   }
@@ -77,7 +87,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
         (poche - _n(m['reste_da'])).clamp(0, double.infinity) +
         _n(m['douane']) + _n(m['taxes_carte']) + _n(m['autres']) +
         _n(m['manques_da']) + _n(m['saisie_da']) +
-        (m['valise_sup'] == true ? _n(m['valise_sup_prix']) : 0);
+        (m['valise_sup'] == true ? _n(m['valise_sup_prix']) : 0) +
+        _n(m['part_sejour_da']);
   }
 
   double _benefDe(Map m) =>
@@ -292,11 +303,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       style: TextStyle(color: DzColors.mut, fontSize: 12.5)),
                 ]),
               ),
-              if (wide) _selecteurPeriode(),
+              if (wide) ...[
+                _pastilleTaux(),
+                const SizedBox(width: 10),
+                _selecteurPeriode(),
+                const SizedBox(width: 10),
+                _boutonDepense(),
+              ],
             ]),
             if (!wide) ...[
               const SizedBox(height: 12),
-              Align(alignment: Alignment.centerLeft, child: _selecteurPeriode()),
+              Row(children: [
+                _pastilleTaux(),
+                const SizedBox(width: 10),
+                Expanded(child: _selecteurPeriode()),
+                const SizedBox(width: 10),
+                _boutonDepense(),
+              ]),
             ],
             const SizedBox(height: 16),
             _kpis(wide),
@@ -337,6 +360,159 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
         ]),
       );
+
+  Widget _pastilleTaux() {
+    final t = _n(_reglages?['taux_rmb']);
+    return GestureDetector(
+      onTap: _ouvrirTaux,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
+        decoration: BoxDecoration(
+            color: DzColors.card, borderRadius: BorderRadius.circular(99)),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          const Text('¥',
+              style: TextStyle(color: DzColors.lime, fontSize: 13,
+                  fontWeight: FontWeight.w800)),
+          const SizedBox(width: 6),
+          Text(t > 0 ? '${_f(t)} DA' : 'taux ?',
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+          const SizedBox(width: 5),
+          const Icon(Icons.edit_outlined, size: 12, color: DzColors.mut2),
+        ]),
+      ),
+    );
+  }
+
+  Future<void> _ouvrirTaux() async {
+    final rmb = TextEditingController(
+        text: _n(_reglages?['taux_rmb']) > 0
+            ? _n(_reglages?['taux_rmb']).toStringAsFixed(2) : '');
+    final usd = TextEditingController(
+        text: _n(_reglages?['taux_parallele_usd']) > 0
+            ? _n(_reglages?['taux_parallele_usd']).toStringAsFixed(0) : '');
+    final eur = TextEditingController(
+        text: _n(_reglages?['taux_parallele_eur']) > 0
+            ? _n(_reglages?['taux_parallele_eur']).toStringAsFixed(0) : '');
+    bool saving = false;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(builder: (ctx, setSt) {
+        Future<void> save() async {
+          if (saving) return;
+          setSt(() => saving = true);
+          try {
+            final r = await Api.put('/reglages/taux', {
+              if (rmb.text.trim().isNotEmpty) 'taux_rmb': _n(rmb.text),
+              if (usd.text.trim().isNotEmpty) 'taux_parallele_usd': _n(usd.text),
+              if (eur.text.trim().isNotEmpty) 'taux_parallele_eur': _n(eur.text),
+            }) as Map;
+            if (mounted) setState(() => _reglages = r);
+            if (ctx.mounted) Navigator.pop(ctx);
+          } on ApiException catch (e) {
+            setSt(() => saving = false);
+            if (ctx.mounted) {
+              ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text(e.message)));
+            }
+          }
+        }
+
+        return Dialog(
+          backgroundColor: DzColors.card,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(22, 22, 22, 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Taux du jour',
+                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 3),
+                  const Text(
+                      'Le nouveau taux ne s’applique qu’aux saisies à venir — '
+                      'les dépenses déjà enregistrées gardent le taux de leur jour.',
+                      style: TextStyle(color: DzColors.mut, fontSize: 11.5, height: 1.4)),
+                  const SizedBox(height: 18),
+                  TextField(
+                    controller: rmb,
+                    autofocus: true,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(labelText: 'Yuan — DA pour 1 ¥'),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(children: [
+                    Expanded(
+                      child: TextField(
+                        controller: usd,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        decoration: const InputDecoration(
+                            labelText: 'Dollar parallèle (DA / 1 \$)'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextField(
+                        controller: eur,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        decoration: const InputDecoration(
+                            labelText: 'Euro parallèle (DA / 1 €)'),
+                      ),
+                    ),
+                  ]),
+                  const SizedBox(height: 18),
+                  FilledButton(
+                    onPressed: saving ? null : save,
+                    child: saving
+                        ? const SizedBox(height: 18, width: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Text('Enregistrer le taux'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      }),
+    );
+  }
+
+  Widget _boutonDepense() => GestureDetector(
+        onTap: _ouvrirDepense,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 9),
+          decoration: BoxDecoration(
+              color: DzColors.card2, borderRadius: BorderRadius.circular(99)),
+          child: const Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Icons.add_rounded, size: 15, color: DzColors.lime),
+            SizedBox(width: 6),
+            Text('Dépense',
+                style: TextStyle(color: DzColors.txt2, fontSize: 12,
+                    fontWeight: FontWeight.w700)),
+          ]),
+        ),
+      );
+
+  Future<void> _ouvrirDepense() async {
+    final s = _sejour;
+    if (s == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Aucun séjour en cours — crée d’abord une mission.')));
+      return;
+    }
+    final ok = await montrerDepenseDialog(context,
+        sejour: s, admins: _admins ?? [], reglages: _reglages);
+    if (ok) await _load();
+  }
+
+  Future<void> _ouvrirHistoriqueDepenses() async {
+    final s = _sejour;
+    if (s == null) return;
+    await montrerHistoriqueDepenses(context, sejour: s, onChange: _load);
+    await _load();
+  }
 
   String get _periodeLab =>
       _periodes.firstWhere((p) => p.$1 == _periodeJours).$2.toLowerCase();
@@ -405,15 +581,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
       );
 
   Widget _colGauche(bool wide) {
-    final vol = _volEnCours;
     final donut = _carteDonutPeriode();
     final seuil = _carteSeuil();
+    final courbe = _carteBeneficeCumule();
+    final sejour = _carteDepensesSejour();
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      if (vol != null) ...[
-        _lab('Vol en cours'),
-        _group(_carteVol(vol)),
-        const SizedBox(height: 16),
-      ],
+      if (wide)
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Expanded(child: courbe),
+          const SizedBox(width: 16),
+          Expanded(child: sejour),
+        ])
+      else ...[courbe, const SizedBox(height: 16), sejour],
+      const SizedBox(height: 16),
       _lab('Missions en cours'),
       _group(_enCours.isEmpty
           ? const Padding(
@@ -432,6 +612,192 @@ class _DashboardScreenState extends State<DashboardScreen> {
           Expanded(child: seuil),
         ])
       else ...[donut, const SizedBox(height: 16), seuil],
+    ]);
+  }
+
+  Map? get _prochainDepart {
+    final now = DateTime.now();
+    final aujourd = DateTime(now.year, now.month, now.day);
+    Map? best;
+    DateTime? bestD;
+    for (final m in _enCours) {
+      final d = DateTime.tryParse('${m['depart'] ?? ''}'.length >= 10
+          ? '${m['depart']}'.substring(0, 10) : '');
+      if (d == null || d.isBefore(aujourd)) continue;
+      if (bestD == null || d.isBefore(bestD)) { best = m; bestD = d; }
+    }
+    return best;
+  }
+
+  Widget _carteVols() {
+    final vol = _volEnCours;
+    final prochain = _prochainDepart;
+    if (vol == null && prochain == null) {
+      return const Padding(
+        padding: EdgeInsets.all(16),
+        child: Text('Aucun vol prévu — crée une mission pour voir le suivi ici.',
+            style: TextStyle(color: DzColors.mut, fontSize: 12.5)),
+      );
+    }
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      if (vol != null) _carteVol(vol),
+      if (prochain != null)
+        Container(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 13),
+          decoration: vol == null ? null : const BoxDecoration(
+              border: Border(top: BorderSide(color: DzColors.line))),
+          child: Row(children: [
+            Container(
+              width: 32, height: 32, alignment: Alignment.center,
+              decoration: const BoxDecoration(
+                  color: DzColors.card2, shape: BoxShape.circle),
+              child: const Icon(Icons.flight_takeoff_rounded,
+                  size: 15, color: DzColors.lime),
+            ),
+            const SizedBox(width: 11),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Text('PROCHAIN DÉPART',
+                    style: TextStyle(color: DzColors.mut, fontSize: 9,
+                        fontWeight: FontWeight.w700, letterSpacing: .8)),
+                const SizedBox(height: 2),
+                Text(
+                    '${'${prochain['vol'] ?? ''}'.isNotEmpty ? prochain['vol'] : prochain['code']}'
+                    ' · ${prochain['voyageur_nom']}',
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
+                Text(
+                    '${_dateFr(prochain['depart'])}'
+                    '${'${prochain['heure_depart'] ?? ''}'.isNotEmpty ? ' · ${prochain['heure_depart']}' : ''}',
+                    style: const TextStyle(color: DzColors.mut, fontSize: 10.5)),
+              ]),
+            ),
+            Builder(builder: (_) {
+              final j = _joursAvant(prochain['depart']);
+              if (j == null) return const SizedBox.shrink();
+              return _pastille(
+                  j == 0 ? 'Aujourd’hui' : j == 1 ? 'Demain' : 'Dans $j j',
+                  j <= 2 ? DzColors.lime : DzColors.amber);
+            }),
+          ]),
+        ),
+    ]);
+  }
+
+  List<DzPointCourbe> get _cumulParMois {
+    final pm = ((_finance?['par_mois'] as List?) ?? []).cast<Map>();
+    final six = pm.length > 6 ? pm.sublist(pm.length - 6) : pm;
+    double cumul = 0;
+    return [
+      for (final e in six)
+        DzPointCourbe(
+          '${e['mois']}'.length >= 7
+              ? _moisCourt[int.tryParse('${e['mois']}'.substring(5, 7)) ?? 0]
+              : '${e['mois']}',
+          cumul += _n(e['net']),
+        ),
+    ];
+  }
+
+  Widget _carteBeneficeCumule() {
+    final pts = _cumulParMois;
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      _lab('Bénéfice cumulé'),
+      _group(Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text.rich(TextSpan(children: [
+            TextSpan(text: pts.isEmpty ? '—' : _f(pts.last.valeur),
+                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+            const TextSpan(text: '  DA de net cumulé',
+                style: TextStyle(color: DzColors.mut, fontSize: 11.5,
+                    fontWeight: FontWeight.w600)),
+          ])),
+          const SizedBox(height: 12),
+          DzCourbe(points: pts, hauteur: 132),
+        ]),
+      )),
+    ]);
+  }
+
+  Widget _carteDepensesSejour() {
+    final s = _sejour;
+    final total = _n(s?['total_da']);
+    final nb = ((num.tryParse('${s?['nb_membres'] ?? 1}') ?? 1).toInt()).clamp(1, 99);
+    final parType = (s?['par_type'] as Map?) ?? {};
+    final couleurs = {
+      'hotel': DzChartColors.bleu,
+      'nourriture': DzChartColors.violet,
+      'transport': DzChartColors.menthe,
+      'autre': DzChartColors.rose,
+    };
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      _labAction('Dépenses du séjour',
+          s == null ? '' : 'Historique', s == null ? null : _ouvrirHistoriqueDepenses),
+      _group(Padding(
+        padding: const EdgeInsets.all(16),
+        child: s == null
+            ? const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Text('Aucun séjour en cours.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: DzColors.mut, fontSize: 12)))
+            : total <= 0
+                ? Column(children: [
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 14),
+                      child: Text(
+                          'Aucune dépense enregistrée pour ce séjour.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: DzColors.mut, fontSize: 12)),
+                    ),
+                    GestureDetector(
+                      onTap: _ouvrirDepense,
+                      child: const Text('Ajouter la première dépense',
+                          style: TextStyle(color: DzColors.lime, fontSize: 12,
+                              fontWeight: FontWeight.w700)),
+                    ),
+                  ])
+                : Column(children: [
+                    Row(children: [
+                      DzDonut(
+                        taille: 116, epaisseur: 13,
+                        segments: [
+                          for (final k in couleurs.keys)
+                            DzSegment(_n(parType[k]), couleurs[k]!),
+                        ],
+                        centre: Column(mainAxisSize: MainAxisSize.min, children: [
+                          Text(_f(total / nb),
+                              style: const TextStyle(
+                                  fontSize: 15, fontWeight: FontWeight.w800)),
+                          const Text('DA chacun',
+                              style: TextStyle(color: DzColors.mut, fontSize: 9)),
+                        ]),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(children: [
+                          for (final k in couleurs.keys)
+                            if (_n(parType[k]) > 0)
+                              DzLegende(
+                                couleur: couleurs[k]!,
+                                libelle: libelleType(k),
+                                valeur: _f(_n(parType[k])),
+                                part: '${(_n(parType[k]) / total * 100).round()} %',
+                              ),
+                        ]),
+                      ),
+                    ]),
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                          '${_f(total)} DA divisés entre $nb personne(s) — '
+                          'ajoutés aux frais de chaque mission',
+                          style: const TextStyle(color: DzColors.mut2, fontSize: 10)),
+                    ),
+                  ]),
+      )),
     ]);
   }
 
@@ -621,6 +987,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final notifs = _notifications;
     final acts = (_activite ?? []).take(6).toList();
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      _lab('Vols'),
+      _group(_carteVols()),
+      const SizedBox(height: 16),
       _lab('Notifications'),
       _group(notifs.isEmpty
           ? const Padding(

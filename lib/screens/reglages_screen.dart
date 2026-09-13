@@ -185,6 +185,8 @@ class _ReglagesScreenState extends State<ReglagesScreen> {
         _groupeProfil(),
         const SizedBox(height: 18),
         _groupeSociete(),
+        const SizedBox(height: 18),
+        _groupeReset(),
       ]);
       return ListView(
         padding: const EdgeInsets.fromLTRB(22, 14, 22, 30),
@@ -303,6 +305,159 @@ class _ReglagesScreenState extends State<ReglagesScreen> {
               style: TextStyle(color: DzColors.mut2, fontSize: 11)),
         ),
       ]);
+
+  bool _resetChambres = true;
+  bool _resetMessages = false;
+  bool _resetActivite = true;
+
+  Widget _groupeReset() => _groupe('Zone de test', [
+        const Padding(
+          padding: EdgeInsets.only(bottom: 12),
+          child: Text(
+              'Remet la base à zéro : missions, valises, tranches, versements, factures, '
+              'séjours, dépenses, créances, dettes et soldes des voyageurs. '
+              'Les comptes admins et voyageurs sont toujours gardés.',
+              style: TextStyle(color: DzColors.mut, fontSize: 11.5, height: 1.45)),
+        ),
+        OutlinedButton.icon(
+          onPressed: _ouvrirReset,
+          style: OutlinedButton.styleFrom(
+            foregroundColor: DzColors.red,
+            side: const BorderSide(color: DzColors.red),
+          ),
+          icon: const Icon(Icons.restart_alt_rounded, size: 17),
+          label: const Text('Tout remettre à zéro'),
+        ),
+      ]);
+
+  Future<void> _ouvrirReset() async {
+    final confirm = TextEditingController();
+    bool saving = false;
+    var chambres = _resetChambres, messages = _resetMessages, activite = _resetActivite;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(builder: (ctx, setSt) {
+        Future<void> go() async {
+          if (saving) return;
+          if (confirm.text.trim() != 'REINITIALISER') {
+            ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(
+                content: Text('Tape REINITIALISER en majuscules pour confirmer.')));
+            return;
+          }
+          setSt(() => saving = true);
+          try {
+            final r = await Api.post('/admin/reinitialiser', {
+              'confirmation': 'REINITIALISER',
+              'chambres': chambres,
+              'messages': messages,
+              'activite': activite,
+            }) as Map;
+            if (ctx.mounted) Navigator.pop(ctx);
+            if (mounted) {
+              final g = (r['comptes_gardes'] as Map?) ?? {};
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: Text('Base remise à zéro — ${g['admins'] ?? 0} admin(s) et '
+                      '${g['voyageurs'] ?? 0} compte(s) voyageur gardés.')));
+            }
+          } on ApiException catch (e) {
+            setSt(() => saving = false);
+            if (ctx.mounted) {
+              ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text(e.message)));
+            }
+          }
+        }
+
+        Widget coche(String t, String sous, bool v, ValueChanged<bool> on) =>
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              activeColor: DzColors.lime,
+              checkColor: DzColors.inkOnLime,
+              value: v,
+              onChanged: (x) => setSt(() => on(x ?? false)),
+              title: Text(t, style: const TextStyle(fontSize: 13)),
+              subtitle: Text(sous,
+                  style: const TextStyle(color: DzColors.mut, fontSize: 10.5)),
+            );
+
+        return Dialog(
+          backgroundColor: DzColors.card,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 460),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(22, 22, 22, 20),
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('Tout remettre à zéro',
+                        style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 4),
+                    const Text('Irréversible. Les comptes admins et voyageurs, leurs '
+                        'identifiants et leurs coordonnées sont gardés.',
+                        style: TextStyle(color: DzColors.mut, fontSize: 11.5, height: 1.45)),
+                    const SizedBox(height: 14),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+                      decoration: BoxDecoration(
+                          color: DzColors.card2, borderRadius: BorderRadius.circular(12)),
+                      child: const Text(
+                          'Toujours effacé : missions, valises, tranches de devises, '
+                          'versements, factures, séjours, dépenses, dettes et soldes.',
+                          style: TextStyle(color: DzColors.txt2, fontSize: 11.5, height: 1.45)),
+                    ),
+                    const SizedBox(height: 10),
+                    coche('Chambres, bons et inventaire',
+                        'efface aussi les fournisseurs et tout le stock',
+                        chambres, (x) => chambres = x),
+                    coche('Messages',
+                        'efface les discussions et les pièces jointes',
+                        messages, (x) => messages = x),
+                    coche('Journal d’activité',
+                        'efface l’historique de la page Activité',
+                        activite, (x) => activite = x),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: confirm,
+                      autocorrect: false,
+                      textCapitalization: TextCapitalization.characters,
+                      decoration: const InputDecoration(
+                          labelText: 'Tape REINITIALISER pour confirmer'),
+                    ),
+                    const SizedBox(height: 18),
+                    FilledButton(
+                      onPressed: saving ? null : go,
+                      style: FilledButton.styleFrom(
+                          backgroundColor: DzColors.red, foregroundColor: Colors.white),
+                      child: saving
+                          ? const SizedBox(height: 18, width: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Text('Effacer définitivement'),
+                    ),
+                    const SizedBox(height: 4),
+                    TextButton(
+                      onPressed: saving ? null : () => Navigator.pop(ctx),
+                      child: const Text('Annuler'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      }),
+    );
+    if (mounted) {
+      setState(() {
+        _resetChambres = chambres;
+        _resetMessages = messages;
+        _resetActivite = activite;
+      });
+    }
+  }
 
   Widget _groupeProfil() => _groupe('Mon profil', [
         Row(children: [

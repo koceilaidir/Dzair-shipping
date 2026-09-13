@@ -28,6 +28,7 @@ class _ProfilDialogState extends State<_ProfilDialog> {
   String? _error;
   final _nom = TextEditingController();
   final _email = TextEditingController();
+  final _username = TextEditingController();
   final _tel = TextEditingController();
   final _adresse = TextEditingController();
   final _wilaya = TextEditingController();
@@ -45,8 +46,8 @@ class _ProfilDialogState extends State<_ProfilDialog> {
 
   @override
   void dispose() {
-    _nom.dispose(); _email.dispose(); _tel.dispose(); _adresse.dispose();
-    _wilaya.dispose(); _mdp.dispose();
+    _nom.dispose(); _email.dispose(); _username.dispose(); _tel.dispose();
+    _adresse.dispose(); _wilaya.dispose(); _mdp.dispose();
     super.dispose();
   }
 
@@ -58,6 +59,7 @@ class _ProfilDialogState extends State<_ProfilDialog> {
         _moi = m;
         _nom.text = '${m['nom'] ?? ''}';
         _email.text = '${m['email'] ?? ''}';
+        _username.text = '${m['username'] ?? ''}';
         _tel.text = '${m['tel'] ?? ''}';
         _adresse.text = '${m['adresse'] ?? ''}';
         _wilaya.text = '${m['wilaya'] ?? ''}';
@@ -94,12 +96,24 @@ class _ProfilDialogState extends State<_ProfilDialog> {
       _snack('Le nouveau mot de passe doit faire 8 caractères minimum.');
       return;
     }
+    final pseudo = _username.text.trim();
+    if (pseudo.isNotEmpty
+        && !RegExp(r'^[a-zA-Z0-9._-]{3,40}$').hasMatch(pseudo)) {
+      _snack('Nom d’utilisateur : 3 caractères minimum, '
+          'lettres, chiffres, point, tiret ou souligné.');
+      return;
+    }
+    if (pseudo.isEmpty && _email.text.trim().isEmpty) {
+      _snack('Garde au moins un nom d’utilisateur ou un email pour te connecter.');
+      return;
+    }
     setState(() => _saving = true);
     try {
       final estVoyageur = _moi?['est_voyageur'] == true;
       await Api.put('/auth/moi', {
         'nom': _nom.text.trim(),
         if (_email.text.trim().isNotEmpty) 'email': _email.text.trim(),
+        if (pseudo.isNotEmpty) 'username': pseudo,
         'tel': _tel.text.trim(),
         if (estVoyageur) 'adresse': _adresse.text.trim(),
         if (estVoyageur) 'wilaya': _wilaya.text.trim(),
@@ -190,10 +204,22 @@ class _ProfilDialogState extends State<_ProfilDialog> {
                           TextField(textCapitalization: TextCapitalization.words, controller: _nom,
                               decoration: const InputDecoration(labelText: 'Nom complet')),
                           const SizedBox(height: 10),
+                          TextField(controller: _username,
+                              autocorrect: false,
+                              textCapitalization: TextCapitalization.none,
+                              decoration: const InputDecoration(
+                                  labelText: 'Nom d’utilisateur (connexion)',
+                                  helperText:
+                                      'Lettres, chiffres, . _ - · 3 caractères minimum',
+                                  helperStyle:
+                                      TextStyle(color: DzColors.mut, fontSize: 10.5))),
+                          const SizedBox(height: 10),
                           TextField(controller: _email,
                               keyboardType: TextInputType.emailAddress,
+                              autocorrect: false,
+                              textCapitalization: TextCapitalization.none,
                               decoration: const InputDecoration(
-                                  labelText: 'Adresse email (connexion)')),
+                                  labelText: 'Adresse email (facultatif)')),
                           const SizedBox(height: 10),
                           TextField(controller: _tel,
                               keyboardType: TextInputType.phone,

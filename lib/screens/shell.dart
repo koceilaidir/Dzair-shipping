@@ -36,6 +36,22 @@ class _ShellState extends State<Shell> {
   int get _tabMessages => _estVoyageur ? 3 : 8;
   int get _tabProfil => _estVoyageur ? 4 : -1;
   List<(IconData, String)> get _itemsRole => _estVoyageur ? _itemsVoyageur : _items;
+  List<(String, List<int>)> get _groupesRole =>
+      _estVoyageur ? _groupesVoyageur : _groupes;
+
+  static const _groupes = [
+    ('', [0, 8]),
+    ('Voyages', [1, 2]),
+    ('Marchandise', [3, 4]),
+    ('Argent', [6, 5]),
+    ('Système', [7, 9]),
+  ];
+
+  static const _groupesVoyageur = [
+    ('', [0, 3]),
+    ('Mon espace', [1, 2]),
+    ('Compte', [4]),
+  ];
 
   static const _items = [
     (Icons.dashboard_outlined, 'Tableau de bord'),
@@ -205,6 +221,7 @@ class _ShellState extends State<Shell> {
                 builder: (ctx) => _SideNav(
                   tab: _tab,
                   items: _itemsRole,
+                  groupes: _groupesRole,
                   nonLus: _nonLus,
                   tabMessages: _tabMessages,
                   largeur: double.infinity,
@@ -232,6 +249,7 @@ class _ShellState extends State<Shell> {
           _SideNav(
             tab: _tab,
             items: _itemsRole,
+            groupes: _groupesRole,
             nonLus: _nonLus,
             tabMessages: _tabMessages,
             photo: _photo,
@@ -273,6 +291,7 @@ class _ShellState extends State<Shell> {
 class _SideNav extends StatelessWidget {
   final int tab;
   final List<(IconData, String)> items;
+  final List<(String, List<int>)> groupes;
   final int nonLus;
   final int tabMessages;
   final ValueChanged<int> onTap;
@@ -281,8 +300,8 @@ class _SideNav extends StatelessWidget {
   final VoidCallback? onClose;
   final VoidCallback? onProfil;
   final Uint8List? photo;
-  const _SideNav({required this.tab, required this.items, required this.nonLus,
-      required this.tabMessages, required this.onTap,
+  const _SideNav({required this.tab, required this.items, required this.groupes,
+      required this.nonLus, required this.tabMessages, required this.onTap,
       this.largeur = 220, this.fond = DzColors.panel, this.onClose,
       this.onProfil, this.photo});
 
@@ -371,9 +390,20 @@ class _SideNav extends StatelessWidget {
           ]),
         ),
 
-        for (var i = 0; i < items.length; i++)
+        Expanded(
+          child: SingleChildScrollView(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        for (final g in groupes) ...[
+          if (g.$1.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(13, 14, 13, 6),
+              child: Text(g.$1.toUpperCase(),
+                  style: const TextStyle(color: DzColors.mut2, fontSize: 9.5,
+                      fontWeight: FontWeight.w700, letterSpacing: 1.1)),
+            ),
+          for (final i in g.$2)
           Padding(
-            padding: const EdgeInsets.only(bottom: 3),
+            padding: const EdgeInsets.only(bottom: 2),
             child: Material(
               color: i == tab ? DzColors.card : Colors.transparent,
               borderRadius: BorderRadius.circular(12),
@@ -410,7 +440,10 @@ class _SideNav extends StatelessWidget {
               ),
             ),
           ),
-        const Spacer(),
+        ],
+            ]),
+          ),
+        ),
 
         Padding(
           padding: const EdgeInsets.only(left: 4),

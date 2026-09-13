@@ -339,3 +339,44 @@ ALTER TABLE missions ADD COLUMN IF NOT EXISTS commission_versee BOOLEAN NOT NULL
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS piece      BYTEA;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS piece_mime TEXT;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS piece_nom  TEXT;
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT;
+ALTER TABLE users ALTER COLUMN email DROP NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username
+  ON users (lower(username)) WHERE username IS NOT NULL;
+
+ALTER TABLE voyageurs ADD COLUMN IF NOT EXISTS est_admin BOOLEAN NOT NULL DEFAULT FALSE;
+
+CREATE TABLE IF NOT EXISTS sejours (
+  id         SERIAL PRIMARY KEY,
+  vol        TEXT NOT NULL DEFAULT '',
+  depart     DATE,
+  retour     DATE,
+  cloture    BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE missions ADD COLUMN IF NOT EXISTS sejour_id   INTEGER REFERENCES sejours(id);
+ALTER TABLE missions ADD COLUMN IF NOT EXISTS part_sejour NUMERIC(14,2);
+
+CREATE TABLE IF NOT EXISTS depenses_sejour (
+  id         SERIAL PRIMARY KEY,
+  sejour_id  INTEGER NOT NULL REFERENCES sejours(id) ON DELETE CASCADE,
+  type       TEXT NOT NULL DEFAULT 'autre'
+             CHECK (type IN ('hotel','nourriture','transport','autre')),
+  montant    NUMERIC(14,2) NOT NULL,
+  devise     TEXT NOT NULL DEFAULT 'DA' CHECK (devise IN ('RMB','USD','EUR','DA')),
+  taux       NUMERIC(10,2) NOT NULL DEFAULT 1,
+  montant_da NUMERIC(14,2) NOT NULL,
+  moyen      TEXT NOT NULL DEFAULT 'cash' CHECK (moyen IN ('alipay','cash')),
+  paye_par   INTEGER REFERENCES users(id),
+  note       TEXT NOT NULL DEFAULT '',
+  date       DATE NOT NULL DEFAULT CURRENT_DATE,
+  user_id    INTEGER REFERENCES users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_missions_sejour  ON missions(sejour_id);
+CREATE INDEX IF NOT EXISTS idx_depenses_sejour  ON depenses_sejour(sejour_id);
+
+ALTER TABLE missions ADD COLUMN IF NOT EXISTS solde_avant NUMERIC(14,2);

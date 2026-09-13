@@ -53,12 +53,33 @@ reglagesRouter.get('/taux-usd', async (_req, res) => {
   }
 });
 
-reglagesRouter.put('/', async (req, res) => {
+async function fusionner(corps, userId, action) {
   const clean = {};
   for (const k of Object.keys(REGLAGES_DEFAUT)) {
-    const v = Number(req.body?.[k]);
+    const v = Number(corps?.[k]);
     if (Number.isFinite(v) && v >= 0) clean[k] = v;
   }
-  await q('UPDATE reglages SET data = $1 WHERE id = 1', [JSON.stringify(clean)]);
-  res.json({ ...REGLAGES_DEFAUT, ...clean });
+  const actuel = (await q('SELECT data FROM reglages WHERE id = 1')).rows[0]?.data ?? {};
+  const fusion = { ...actuel, ...clean };
+  await q('UPDATE reglages SET data = $1 WHERE id = 1', [JSON.stringify(fusion)]);
+  if (userId) {
+    await q(`INSERT INTO audit_log (user_id, action, entite, entite_id, details)
+             VALUES ($1,$2,'reglages',1,$3)`, [userId, action, JSON.stringify(clean)]);
+  }
+  return { ...REGLAGES_DEFAUT, ...fusion };
+}
+
+reglagesRouter.put('/', async (req, res) => {
+  res.json(await fusionner(req.body, req.user?.sub, 'reglages'));
+});
+
+reglagesRouter.put('/taux', async (req, res) => {
+  const corps = {};
+  for (const k of ['taux_rmb', 'taux_parallele_usd', 'taux_parallele_eur', 'taux_officiel']) {
+    if (req.body?.[k] !== undefined) corps[k] = req.body[k];
+  }
+  if (!Object.keys(corps).length) {
+    return res.status(400).json({ error: 'Aucun taux fourni.' });
+  }
+  res.json(await fusionner(corps, req.user?.sub, 'taux'));
 });

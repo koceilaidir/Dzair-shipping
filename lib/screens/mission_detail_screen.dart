@@ -30,7 +30,6 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
   bool _rangeAuto = false;
   bool _formLibre = false;
   bool _valiseRange = false;
-  bool? _volRange;
   List _factures = [];
   final _nom = TextEditingController();
   final _kg = TextEditingController();
@@ -126,8 +125,10 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     return t > 0 ? t : 135;
   }
 
-  double get _taxesCarte => (_facturee
-          ? _n(_m!['factures_total']) : _marchandiseDevise) * _pctCarte * _tauxParallele;
+  double get _taxesCarte => _m!['est_admin'] == true
+      ? 0
+      : (_facturee ? _n(_m!['factures_total']) : _marchandiseDevise)
+          * _pctCarte * _tauxParallele;
 
   double get _declareTotal =>
       _affSoute.fold(0.0, (s, a) => s + _n(a['quantite']) * _n(a['prix_declare']));
@@ -146,7 +147,9 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
   double get _kIfu =>
       _m!['statut'] == 'cloturee' && !_taxesReelles ? (_marge30 ? 1.3 : 1.0) : 1.3;
 
-  double get _douane => _taxesReelles
+  double get _douane => _m!['est_admin'] == true
+      ? 0
+      : _taxesReelles
       ? _n(_m!['taxes_reelles'])
       : _m!['statut'] == 'cloturee'
           ? _n(_m!['douane'])
@@ -158,9 +161,18 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
   double get _valDeclaree => _facturee
       ? _n(_m!['val_declaree'])
       : _baseDouane * _tauxOfficiel;
+  bool get _estAdmin => _m!['est_admin'] == true;
+  double get _partSejour => _n(_m!['part_sejour_da']);
   double get _frais => _n(_m!['billet']) + _n(_m!['dem_cout']) + _n(_m!['frais_visa']) +
       _poche + _douane + _taxesCarte + _n(_m!['autres']) + _n(_m!['manques_da']) +
-      (_valiseSup ? _n(_m!['valise_sup_prix']) : 0) + _n(_m!['saisie_da']);
+      (_valiseSup ? _n(_m!['valise_sup_prix']) : 0) + _n(_m!['saisie_da']) +
+      _partSejour;
+
+  int get _nbMembresSejour {
+    final s = _m!['sejour'];
+    if (s is Map) return (num.tryParse('${s['nb_membres'] ?? 1}') ?? 1).toInt();
+    return 1;
+  }
 
   bool get _valiseSup => _m!['valise_sup'] == true;
   bool get _bagMain => _m!['bagage_main'] == true;
@@ -604,12 +616,24 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     final over = _valDeclaree > 1800000;
     final wide = MediaQuery.of(context).size.width >= 850;
 
-    final e = _etape;
-    final volRange = _volRange ?? (e >= 3);
     return ListView(padding: const EdgeInsets.fromLTRB(16, 10, 16, 32), children: [
-      Text('${m['vol'] ?? ''} · ${dateFr(m['depart'])} → ${dateFr(m['retour'])} · '
-          '${m['jours']} j · compte ${_devise}',
-          style: const TextStyle(color: DzColors.mut, fontSize: 12)),
+      Row(children: [
+        Expanded(
+          child: Text('${m['vol'] ?? ''} · ${dateFr(m['depart'])} → ${dateFr(m['retour'])} · '
+              '${m['jours']} j · compte ${_devise}',
+              style: const TextStyle(color: DzColors.mut, fontSize: 12)),
+        ),
+        if (!closed)
+          TextButton.icon(
+            onPressed: _editDates,
+            style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                visualDensity: VisualDensity.compact,
+                foregroundColor: DzColors.mut),
+            icon: const Icon(Icons.edit_calendar_outlined, size: 15),
+            label: const Text('Dates', style: TextStyle(fontSize: 12)),
+          ),
+      ]),
       const SizedBox(height: 12),
 
       if (over)
@@ -645,9 +669,6 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
         const SizedBox(height: 12),
         _checklist('Check avant le départ', 'check_depart', _itemsDepart, auto: _autoDepart()),
       ],
-      const SizedBox(height: 12),
-
-      if (volRange) _volResume() else _sectionVol(closed),
       const SizedBox(height: 12),
 
       if (_valiseClose && _valiseRange)
@@ -751,34 +772,6 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
             ]),
     );
   }
-
-  Widget _volResume() {
-    final m = _m!;
-    final hd = '${m['heure_depart'] ?? ''}', ha = '${m['heure_arrivee'] ?? ''}';
-    return _ligneRangee(
-      Icons.flight_takeoff_outlined,
-      '② Vol aller — ${m['vol'] ?? ''} · départ ${dateFr(m['depart'])}${hd.isNotEmpty ? ' $hd' : ''}'
-      ' → arrivée${ha.isNotEmpty ? ' $ha' : ''} · retour ${dateFr(m['retour'])}',
-      onDerouler: () => setState(() => _volRange = false),
-    );
-  }
-
-  Widget _ligneRangee(IconData ic, String texte, {required VoidCallback onDerouler}) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-        decoration: BoxDecoration(color: DzColors.card, borderRadius: BorderRadius.circular(14)),
-        child: Row(children: [
-          const Icon(Icons.check_circle, size: 14, color: DzColors.lime),
-          const SizedBox(width: 9),
-          Expanded(child: Text(texte, maxLines: 1, overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: DzColors.mut))),
-          TextButton.icon(
-            onPressed: onDerouler,
-            style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 10), visualDensity: VisualDensity.compact),
-            icon: const Icon(Icons.unfold_more, size: 15),
-            label: const Text('Dérouler', style: TextStyle(fontSize: 12)),
-          ),
-        ]),
-      );
 
   Widget _kpiRow() {
     final colBenef =
@@ -1009,7 +1002,11 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
             ]),
           ),
         ),
-        if (_taxesReelles)
+        if (_estAdmin)
+          _ligne('Douane · IFU · taxes carte',
+              'rien — mission admin, hors carte auto-entrepreneur',
+              couleur: DzColors.mut)
+        else if (_taxesReelles)
           _ligne('Taxes douane + IFU (réelles — payées à l’arrivée)', '${_f(_douane)} DA')
         else ...[
           _ligne(
@@ -1023,17 +1020,23 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
                   : 'Taxe IFU 0,5 % — marge 30 % comptée (au cas où)',
               '${_f(_taxeIfu)} DA'),
         ],
-        _ligne(
-            _facturee
-                ? 'Taxes carte (réelles, factures)'
-                : 'Taxes carte — si tout le dépôt est retiré',
-            '${_f(_taxesCarte)} DA'),
+        if (!_estAdmin)
+          _ligne(
+              _facturee
+                  ? 'Taxes carte (réelles, factures)'
+                  : 'Taxes carte — si tout le dépôt est retiré',
+              '${_f(_taxesCarte)} DA'),
         if (_valiseSup)
           _ligne('3e valise (compagnie, ${_valiseSupKg.toStringAsFixed(0)} kg)',
               '${_f(_n(m['valise_sup_prix']))} DA'),
         if (_n(m['saisie_da']) > 0)
           _ligne('Saisie douanière (remboursée aux chambres)',
               '${_f(_n(m['saisie_da']))} DA', couleur: DzColors.red),
+        if (_partSejour > 0)
+          _ligne(
+              'Part des frais de séjour (hôtel · nourriture · transport, '
+              'divisés entre ${_nbMembresSejour} personne(s))',
+              '${_f(_partSejour)} DA'),
         _ligne('Autres frais', '${_f(_n(m['autres']))} DA'),
         const Divider(color: DzColors.line, height: 18),
         _ligne('Total dépenses', '${_f(_frais)} DA', gras: true),
@@ -1212,51 +1215,6 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
           ),
         ),
       );
-
-  Widget _sectionVol(bool closed) {
-    final m = _m!;
-    final hd = '${m['heure_depart'] ?? ''}';
-    final ha = '${m['heure_arrivee'] ?? ''}';
-    return _card(
-      titre: '② Vol aller',
-      action: Row(mainAxisSize: MainAxisSize.min, children: [
-        if (_etape >= 3)
-          TextButton.icon(
-            onPressed: () => setState(() => _volRange = true),
-            style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 10), visualDensity: VisualDensity.compact),
-            icon: const Icon(Icons.unfold_less, size: 15),
-            label: const Text('Ranger', style: TextStyle(fontSize: 12)),
-          ),
-        if (!closed) IconButton(
-          onPressed: _editVol,
-          icon: const Icon(Icons.edit_outlined, size: 17, color: DzColors.mut),
-          tooltip: 'Heures du vol',
-        ),
-      ]),
-      child: Row(children: [
-        _volCol('Départ', hd.isEmpty ? '—' : hd, dateFr(m['depart'])),
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            child: Column(children: [
-              const Icon(Icons.flight, color: DzColors.lime, size: 20),
-              const SizedBox(height: 2),
-              Text(m['vol'] ?? '', style: const TextStyle(color: DzColors.mut, fontSize: 10)),
-            ]),
-          ),
-        ),
-        _volCol('Arrivée', ha.isEmpty ? '—' : ha, dateFr(m['retour'])),
-      ]),
-    );
-  }
-
-  Widget _volCol(String l, String heure, String date) => Column(children: [
-        Text(l.toUpperCase(), style: const TextStyle(color: DzColors.mut, fontSize: 9,
-            fontWeight: FontWeight.w700, letterSpacing: .6)),
-        const SizedBox(height: 3),
-        Text(heure, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
-        Text(date, style: const TextStyle(color: DzColors.mut, fontSize: 10)),
-      ]);
 
   Widget _sectionValise(bool closed) {
     final m = _m!;
@@ -2213,13 +2171,110 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     );
   }
 
-  Future<void> _editVol() async {
-    final hd = TextEditingController(text: '${_m!['heure_depart'] ?? ''}');
-    final ha = TextEditingController(text: '${_m!['heure_arrivee'] ?? ''}');
-    await _simpleDialog('Heures du vol', [
-      ('heure_depart', 'Heure de départ (ex. 12:10)', hd),
-      ('heure_arrivee', 'Heure d’arrivée (ex. 18:40)', ha),
-    ], (body) => Api.put('/missions/${widget.id}', body));
+  Future<void> _editDates() async {
+    final m = _m!;
+    DateTime? depart = DateTime.tryParse('${m['depart'] ?? ''}');
+    DateTime? retour = DateTime.tryParse('${m['retour'] ?? ''}');
+    final vol = TextEditingController(text: '${m['vol'] ?? ''}');
+    final hd = TextEditingController(text: '${m['heure_depart'] ?? ''}');
+    final ha = TextEditingController(text: '${m['heure_arrivee'] ?? ''}');
+    bool saving = false;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(builder: (ctx, setSt) {
+        Future<void> save() async {
+          if (saving) return;
+          if (depart == null) {
+            ScaffoldMessenger.of(ctx).showSnackBar(
+                const SnackBar(content: Text('Choisis au moins la date de départ.')));
+            return;
+          }
+          if (retour != null && retour!.isBefore(depart!)) {
+            ScaffoldMessenger.of(ctx).showSnackBar(
+                const SnackBar(content: Text('Le retour ne peut pas précéder le départ.')));
+            return;
+          }
+          setSt(() => saving = true);
+          try {
+            await Api.put('/missions/${widget.id}', {
+              'vol': vol.text.trim(),
+              'depart': isoDate(depart!),
+              'retour': retour == null ? null : isoDate(retour!),
+              'heure_depart': hd.text.trim().isEmpty ? null : hd.text.trim(),
+              'heure_arrivee': ha.text.trim().isEmpty ? null : ha.text.trim(),
+            });
+            if (ctx.mounted) Navigator.pop(ctx);
+            _load();
+          } on ApiException catch (e) {
+            setSt(() => saving = false);
+            if (ctx.mounted) {
+              ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text(e.message)));
+            }
+          }
+        }
+
+        return Dialog(
+          backgroundColor: DzColors.card,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 440),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 22, 20, 22),
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('Dates du voyage',
+                        style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 4),
+                    const Text('Le nombre de jours et l’argent de poche se recalculent.',
+                        style: TextStyle(color: DzColors.mut, fontSize: 11.5)),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: vol,
+                      textCapitalization: TextCapitalization.characters,
+                      decoration: const InputDecoration(labelText: 'N° de vol / billet'),
+                    ),
+                    const SizedBox(height: 14),
+                    Row(children: [
+                      Expanded(child: DzDateField(
+                          label: 'Départ (billet)', value: depart,
+                          onChanged: (d) => setSt(() => depart = d))),
+                      const SizedBox(width: 12),
+                      Expanded(child: DzDateField(
+                          label: 'Retour', value: retour,
+                          onChanged: (d) => setSt(() => retour = d))),
+                    ]),
+                    const SizedBox(height: 14),
+                    Row(children: [
+                      Expanded(child: TextField(controller: hd,
+                          keyboardType: TextInputType.datetime,
+                          decoration: const InputDecoration(
+                              labelText: 'Décollage (HH:mm)', hintText: '16:00'))),
+                      const SizedBox(width: 12),
+                      Expanded(child: TextField(controller: ha,
+                          keyboardType: TextInputType.datetime,
+                          decoration: const InputDecoration(
+                              labelText: 'Atterrissage (HH:mm)', hintText: '06:30'))),
+                    ]),
+                    const SizedBox(height: 18),
+                    FilledButton(
+                      onPressed: saving ? null : save,
+                      child: saving
+                          ? const SizedBox(height: 18, width: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Text('Enregistrer'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      }),
+    );
   }
 
   Future<void> _editFrais() async {

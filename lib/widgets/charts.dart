@@ -223,3 +223,105 @@ class DzVolProgress extends StatelessWidget {
     );
   }
 }
+
+class DzPointCourbe {
+  final String label;
+  final double valeur;
+  const DzPointCourbe(this.label, this.valeur);
+}
+
+class DzCourbe extends StatelessWidget {
+  final List<DzPointCourbe> points;
+  final double hauteur;
+  final Color couleur;
+  const DzCourbe({super.key, required this.points, this.hauteur = 130,
+      this.couleur = DzColors.lime});
+
+  @override
+  Widget build(BuildContext context) {
+    if (points.length < 2) {
+      return SizedBox(
+        height: hauteur,
+        child: const Center(
+          child: Text('Pas encore assez de données pour tracer la courbe.',
+              style: TextStyle(color: DzColors.mut, fontSize: 11.5)),
+        ),
+      );
+    }
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      SizedBox(
+        height: hauteur,
+        child: CustomPaint(painter: _CourbePainter(points, couleur)),
+      ),
+      const SizedBox(height: 6),
+      Row(children: [
+        for (var i = 0; i < points.length; i++)
+          Expanded(
+            child: Text(points[i].label,
+                textAlign: i == 0
+                    ? TextAlign.left
+                    : i == points.length - 1 ? TextAlign.right : TextAlign.center,
+                maxLines: 1, overflow: TextOverflow.clip,
+                style: const TextStyle(color: DzColors.mut, fontSize: 9.5)),
+          ),
+      ]),
+    ]);
+  }
+}
+
+class _CourbePainter extends CustomPainter {
+  final List<DzPointCourbe> pts;
+  final Color couleur;
+  _CourbePainter(this.pts, this.couleur);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    var maxV = pts.fold<double>(0, (m, p) => math.max(m, p.valeur));
+    var minV = pts.fold<double>(0, (m, p) => math.min(m, p.valeur));
+    if (maxV == minV) maxV = minV + 1;
+    final pas = size.width / (pts.length - 1);
+    double y(double v) => size.height - (v - minV) / (maxV - minV) * (size.height - 8) - 4;
+
+    final grille = Paint()..color = DzColors.line..strokeWidth = 1;
+    for (var i = 0; i <= 3; i++) {
+      final gy = size.height / 3 * i;
+      canvas.drawLine(Offset(0, gy), Offset(size.width, gy), grille);
+    }
+
+    final trait = Path();
+    for (var i = 0; i < pts.length; i++) {
+      final p = Offset(pas * i, y(pts[i].valeur));
+      if (i == 0) {
+        trait.moveTo(p.dx, p.dy);
+      } else {
+        final prec = Offset(pas * (i - 1), y(pts[i - 1].valeur));
+        final cx = (prec.dx + p.dx) / 2;
+        trait.cubicTo(cx, prec.dy, cx, p.dy, p.dx, p.dy);
+      }
+    }
+
+    final aire = Path.from(trait)
+      ..lineTo(size.width, size.height)
+      ..lineTo(0, size.height)
+      ..close();
+    canvas.drawPath(aire, Paint()
+      ..shader = LinearGradient(
+        begin: Alignment.topCenter, end: Alignment.bottomCenter,
+        colors: [couleur.withValues(alpha: .28), couleur.withValues(alpha: 0)],
+      ).createShader(Offset.zero & size));
+
+    canvas.drawPath(trait, Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.4
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..color = couleur);
+
+    final dernier = Offset(size.width, y(pts.last.valeur));
+    canvas.drawCircle(dernier, 6, Paint()..color = couleur.withValues(alpha: .25));
+    canvas.drawCircle(dernier, 3.2, Paint()..color = couleur);
+  }
+
+  @override
+  bool shouldRepaint(_CourbePainter old) => old.pts != pts || old.couleur != couleur;
+}

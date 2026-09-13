@@ -20,10 +20,14 @@ class Api {
   static String? nom;
   static bool get connecte => _token != null;
 
-  static Future<void> login(String email, String password,
+  static Future<void> login(String identifiant, String password,
       {bool souvenir = false}) async {
     final data = await _send('POST', '/auth/login',
-        body: {'email': email, 'password': password, 'souvenir': souvenir},
+        body: {
+          'identifiant': identifiant,
+          'password': password,
+          'souvenir': souvenir,
+        },
         auth: false);
     _token = data['token'] as String?;
     role = data['role'] as String?;

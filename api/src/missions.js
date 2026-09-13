@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { q } from './db.js';
 import { requireAuth, requireRole } from './auth.js';
 import { getReglages } from './reglages.js';
+import { SQL_PART_SEJOUR, figerPartSejour } from './sejours.js';
 
 export const missionsRouter = Router();
 missionsRouter.use(requireAuth, requireRole('admin', 'voyageur'));
@@ -44,6 +45,8 @@ const missionVoyageur = (m) => ({
   commission: m.commission, primes: m.primes, commission_versee: m.commission_versee,
   cloture_date: m.cloture_date, poche_mode: m.poche_mode,
   voyageur_nom: m.voyageur_nom, kg_total: m.kg_total,
+  est_admin: m.est_admin, sejour_id: m.sejour_id,
+  part_sejour: m.part_sejour_calc != null ? Math.round(Number(m.part_sejour_calc)) : null,
 });
 
 const affectationVoyageur = (a) => ({
@@ -89,7 +92,8 @@ const frais = (m, pocheDA = 0, taxesCarteDA = 0, resteDA = 0) =>
   Math.max(0, (pocheDA > 0 ? pocheDA : Number(m.jours) * Number(m.budget_jour)) - resteDA) +
   Number(m.douane) + taxesCarteDA + Number(m.autres) + Number(m.manques_da || 0) +
   (m.valise_sup ? Number(m.valise_sup_prix || 0) : 0) +
-  Number(m.saisie_da || 0) + Number(m.frais_taxi || 0);
+  Number(m.saisie_da || 0) + Number(m.frais_taxi || 0) +
+  Number(m.part_sejour_calc || 0);
 
 function tauxParallele(reglages, devise, secours) {
   const t = Number(devise === 'EUR' ? reglages.taux_parallele_eur : reglages.taux_parallele_usd);
@@ -153,9 +157,11 @@ async function declareDe(id) {
 }
 
 async function majDouaneEstimee(id) {
-  const m = (await q('SELECT statut, taxes_reelles FROM missions WHERE id = $1', [id])).rows[0];
+  const m = (await q(
+    `SELECT m.statut, m.taxes_reelles, v.est_admin
+     FROM missions m JOIN voyageurs v ON v.id = m.voyageur_id WHERE m.id = $1`, [id])).rows[0];
 
-  if (!m || m.statut === 'cloturee' || m.taxes_reelles != null) return;
+  if (!m || m.est_admin || m.statut === 'cloturee' || m.taxes_reelles != null) return;
   const { marchDevise } = await sommesTranches(id);
   const declare = await declareDe(id);
   const reglages = await getReglages();
@@ -179,7 +185,8 @@ function joursEntre(dep, ret) {
 missionsRouter.get('/', async (req, res) => {
   if (req.user.role === 'voyageur') {
     const { rows } = await q(`
-      SELECT m.*, v.nom AS voyageur_nom,
+      SELECT m.*, v.nom AS voyageur_nom, v.est_admin,
+             ${SQL_PART_SEJOUR} AS part_sejour_calc,
              COALESCE((SELECT SUM(a.quantite * l.poids_total / l.quantite)
                        FROM affectations a JOIN bon_lignes l ON l.id = a.ligne_id
                        WHERE a.mission_id = m.id), 0) AS kg_total
@@ -189,7 +196,8 @@ missionsRouter.get('/', async (req, res) => {
     return res.json(rows.map(missionVoyageur));
   }
   const { rows } = await q(`
-    SELECT m.*, v.nom AS voyageur_nom, v.devise_compte,
+    SELECT m.*, v.nom AS voyageur_nom, v.devise_compte, v.est_admin,
+           ${SQL_PART_SEJOUR} AS part_sejour_calc,
            COALESCE((SELECT SUM(kg) FROM produits_mission p WHERE p.mission_id = m.id), 0)
              + COALESCE((SELECT SUM(a.quantite * l.poids_total / l.quantite)
                          FROM affectations a JOIN bon_lignes l ON l.id = a.ligne_id
@@ -226,12 +234,19 @@ missionsRouter.get('/', async (req, res) => {
       ? Math.round(Number(r.factures_total) * pct * tPar)
       : Math.round(mdev * pct * tPar);
     const decl = Number(r.declare_total);
-    const douane = r.taxes_reelles != null
-      ? Number(r.taxes_reelles)
-      : r.statut === 'cloturee'
-        ? Number(r.douane)
-        : taxesArrivee(basePrevision(mdev, decl, reglages), reglages, true);
-    return { ...r, taxes_carte: taxes, douane };
+    const douane = r.est_admin
+      ? 0
+      : r.taxes_reelles != null
+        ? Number(r.taxes_reelles)
+        : r.statut === 'cloturee'
+          ? Number(r.douane)
+          : taxesArrivee(basePrevision(mdev, decl, reglages), reglages, true);
+    return {
+      ...r,
+      taxes_carte: r.est_admin ? 0 : taxes,
+      douane,
+      part_sejour_da: Math.round(Number(r.part_sejour_calc || 0)),
+    };
   }));
 });
 
@@ -242,7 +257,9 @@ missionsRouter.get('/:id', proprietaire, async (req, res) => {
             v.comm_val AS v_comm_val, v.bagages AS v_bagages,
             v.devise_compte AS v_devise, v.solde_devises AS v_solde,
             v.allocation_eligible AS v_alloc_eligible,
-            v.allocation_derniere AS v_alloc_derniere
+            v.allocation_derniere AS v_alloc_derniere,
+            v.est_admin,
+            ${SQL_PART_SEJOUR} AS part_sejour_calc
      FROM missions m JOIN voyageurs v ON v.id = m.voyageur_id WHERE m.id = $1`,
     [id])).rows[0];
   if (!m) return res.status(404).json({ error: 'Mission introuvable.' });
@@ -266,7 +283,11 @@ missionsRouter.get('/:id', proprietaire, async (req, res) => {
      JOIN chambres c ON c.id = b.chambre_id
      WHERE a.mission_id = $1 ORDER BY a.id`, [id])).rows;
 
-  if (m.statut !== 'cloturee' && m.taxes_reelles == null) {
+  if (m.est_admin && Number(m.douane) !== 0) {
+    await q('UPDATE missions SET douane = 0 WHERE id = $1', [id]);
+    m.douane = 0;
+  }
+  if (!m.est_admin && m.statut !== 'cloturee' && m.taxes_reelles == null) {
     const reglages = await getReglages();
     const marchDevise = tranches
       .filter((t) => t.motif === 'voyage')
@@ -292,17 +313,69 @@ missionsRouter.get('/:id', proprietaire, async (req, res) => {
       arrivee_photo: !!photo,
     });
   }
-  res.json({ ...m, produits, paiements, tranches, affectations, arrivee_photo: !!photo });
+  let sejour = null;
+  if (m.sejour_id) {
+    const s = (await q(`
+      SELECT s.id, s.vol, s.depart, s.retour, s.cloture,
+             (SELECT COUNT(*) FROM missions mm
+              WHERE mm.sejour_id = s.id AND mm.statut <> 'annulee') AS nb_membres,
+             (SELECT COALESCE(SUM(montant_da), 0) FROM depenses_sejour d
+              WHERE d.sejour_id = s.id) AS total_da
+      FROM sejours s WHERE s.id = $1`, [m.sejour_id])).rows[0];
+    if (s) {
+      sejour = { ...s, nb_membres: Number(s.nb_membres), total_da: Math.round(Number(s.total_da)) };
+    }
+  }
+  res.json({
+    ...m,
+    part_sejour_da: Math.round(Number(m.part_sejour_calc || 0)),
+    sejour,
+    produits, paiements, tranches, affectations, arrivee_photo: !!photo,
+  });
 });
+
+async function prochainNumCode() {
+  const r = (await q(
+    `SELECT COALESCE(MAX(NULLIF(regexp_replace(code, '\\D', '', 'g'), '')::int), 0) AS n
+     FROM missions`)).rows[0];
+  return Number(r?.n ?? 0) + 1;
+}
+
+async function ficheAdmin(userId) {
+  const ex = (await q(
+    'SELECT * FROM voyageurs WHERE user_id = $1 AND est_admin LIMIT 1', [userId])).rows[0];
+  if (ex) return ex;
+  const u = (await q(`SELECT nom FROM users WHERE id = $1 AND role = 'admin'`, [userId])).rows[0];
+  if (!u) return null;
+  const { rows } = await q(
+    `INSERT INTO voyageurs (nom, user_id, est_admin, bagages, comm_mode, comm_val,
+       statut_dispo, devise_compte, allocation_eligible)
+     VALUES ($1,$2,TRUE,2,'fixe',0,'disponible','USD',TRUE) RETURNING *`,
+    [u.nom, userId]);
+  return rows[0];
+}
 
 missionsRouter.post('/', adminSeul, async (req, res) => {
   const parsed = missionBase.extend({
-    voyageur_ids: z.array(z.coerce.number().int()).min(1),
+    voyageur_ids: z.array(z.coerce.number().int()).optional().default([]),
+    admin_user_ids: z.array(z.coerce.number().int()).optional().default([]),
   }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Données invalides.' });
-  const { voyageur_ids, ...base } = parsed.data;
+  const { voyageur_ids, admin_user_ids, ...base } = parsed.data;
+  if (!voyageur_ids.length && !admin_user_ids.length) {
+    return res.status(400).json({ error: 'Choisis au moins un voyageur ou un admin.' });
+  }
   const mois = moisDe(base.depart);
   const reglages = await getReglages();
+
+  const fichesAdmin = [];
+  for (const uid of admin_user_ids) {
+    const f = await ficheAdmin(uid);
+    if (!f) return res.status(400).json({ error: `Admin ${uid} introuvable.` });
+    if (!fichesAdmin.some((x) => x.id === f.id)) fichesAdmin.push(f);
+  }
+  const idsAdmin = fichesAdmin.map((f) => f.id);
+  const tousIds = [...new Set([...voyageur_ids.filter((v) => !idsAdmin.includes(v)), ...idsAdmin])];
 
   if (!base.dem_cout) {
     base.dem_cout = {
@@ -314,6 +387,7 @@ missionsRouter.post('/', adminSeul, async (req, res) => {
   }
   const fraisVisa = reglages.frais_depot_visa ?? 6800;
   if (!req.body.budget_jour) base.budget_jour = reglages.budget_jour_defaut ?? 3000;
+  if (idsAdmin.length) base.budget_jour = 0;
 
   base.jours = joursEntre(base.depart, base.retour);
 
@@ -323,7 +397,7 @@ missionsRouter.post('/', adminSeul, async (req, res) => {
        WHERE vol = $1 AND depart = $2 AND statut <> 'annulee'
          AND created_at > now() - interval '30 seconds'`,
       [base.vol, base.depart])).rows;
-    if (dup.length && voyageur_ids.every((v) => dup.some((d) => d.voyageur_id === v))) {
+    if (dup.length && tousIds.every((v) => dup.some((d) => d.voyageur_id === v))) {
       return res.status(200).json(
         (await q('SELECT * FROM missions WHERE id = ANY($1)', [dup.map((d) => d.id)])).rows);
     }
@@ -331,7 +405,7 @@ missionsRouter.post('/', adminSeul, async (req, res) => {
 
   const dateRef = base.retour || base.depart || new Date().toISOString().slice(0, 10);
   const bloques = [];
-  for (const vid of voyageur_ids) {
+  for (const vid of tousIds.filter((v) => !idsAdmin.includes(v))) {
     const { rows } = await q(
       `SELECT v.nom, v.statut_dispo, v.passeport_expire, v.autorisation_expire, COUNT(m.id) AS n
        FROM voyageurs v
@@ -353,27 +427,54 @@ missionsRouter.post('/', adminSeul, async (req, res) => {
     return res.status(409).json({ error: '🚫 ' + bloques.join(' · ') });
   }
 
+  const sejour = (await q(
+    `INSERT INTO sejours (vol, depart, retour) VALUES ($1,$2,$3) RETURNING id`,
+    [base.vol || '', base.depart ?? null, base.retour ?? null])).rows[0];
+
   const created = [];
-  for (const vid of voyageur_ids) {
+  let num = await prochainNumCode();
+  for (const vid of tousIds) {
     const v = (await q('SELECT * FROM voyageurs WHERE id = $1', [vid])).rows[0];
+    if (!v) return res.status(400).json({ error: `Voyageur ${vid} introuvable.` });
+    const estAdmin = !!v.est_admin;
     const kgSoute = (Number(v.bagages) || 2) * 23;
-    const seq = (await q('SELECT COUNT(*) AS n FROM missions')).rows[0].n;
-    const code = 'MSN-' + String(Number(seq) + 1).padStart(3, '0');
     const vd = volDerive(base.depart, base.heure_depart, base.heure_arrivee);
-    const { rows } = await q(
-      `INSERT INTO missions (voyageur_id, code, vol, depart, retour, jours, budget_jour,
-         billet, dem_type, dem_cout, bea, douane, autres, objectif, kg_soute, val_declaree,
-         frais_visa, heure_depart, heure_arrivee, heure_decollage, duree_vol_min, statut)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,'encours') RETURNING *`,
-      [vid, code, base.vol, base.depart, base.retour, base.jours, base.budget_jour,
-       base.billet, base.dem_type, base.dem_cout, base.bea, base.douane, base.autres,
-       base.objectif, kgSoute, base.val_declaree ?? null, fraisVisa,
-       base.heure_depart ?? null, base.heure_arrivee ?? null, vd.decollage, vd.duree]);
-    created.push(rows[0]);
+
+    let ligne = null;
+    let code = '';
+    for (let essai = 0; essai < 20 && !ligne; essai++) {
+      code = (estAdmin ? 'ADM-' : 'MSN-') + String(num).padStart(3, '0');
+      try {
+        ligne = (await q(
+          `INSERT INTO missions (voyageur_id, code, vol, depart, retour, jours, budget_jour,
+             billet, dem_type, dem_cout, bea, douane, autres, objectif, kg_soute, val_declaree,
+             frais_visa, heure_depart, heure_arrivee, heure_decollage, duree_vol_min,
+             sejour_id, statut)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,
+             'encours') RETURNING *`,
+          [vid, code, base.vol, base.depart, base.retour, base.jours, base.budget_jour,
+           base.billet, base.dem_type, base.dem_cout, base.bea,
+           estAdmin ? 0 : base.douane, base.autres,
+           base.objectif, kgSoute, estAdmin ? null : (base.val_declaree ?? null),
+           estAdmin ? 0 : fraisVisa,
+           base.heure_depart ?? null, base.heure_arrivee ?? null, vd.decollage, vd.duree,
+           sejour.id])).rows[0];
+      } catch (err) {
+        if (err?.code !== '23505') throw err;
+        num++;
+      }
+    }
+    if (!ligne) {
+      return res.status(500).json({ error: 'Impossible de générer un code de mission libre.' });
+    }
+    num++;
+    created.push(ligne);
     await q(`INSERT INTO audit_log (user_id, action, entite, entite_id, details)
              VALUES ($1,'create','mission',$2,$3)`,
-      [req.user.sub, rows[0].id, JSON.stringify({ code, voyageur: v.nom })]);
+      [req.user.sub, ligne.id,
+       JSON.stringify({ code, voyageur: v.nom, admin: estAdmin, sejour: sejour.id })]);
 
+    if (estAdmin) continue;
     const nMois = Number((await q(
       `SELECT COUNT(*) AS n FROM missions
        WHERE voyageur_id = $1 AND statut <> 'annulee' AND to_char(depart,'YYYY-MM') = $2`,
@@ -453,6 +554,20 @@ missionsRouter.put('/:id', proprietaire, async (req, res) => {
      m.bagage_main ?? false, m.bagage_main_kg ?? 8, m.bagage_main_close ?? false,
      m.liquide_remis ?? null, id]);
 
+  if (cur.sejour_id && (parsed.data.depart !== undefined || parsed.data.retour !== undefined
+      || parsed.data.vol !== undefined)) {
+    await q(`
+      UPDATE sejours s SET
+        depart = (SELECT MIN(depart) FROM missions mm
+                  WHERE mm.sejour_id = s.id AND mm.statut <> 'annulee'),
+        retour = (SELECT MAX(retour) FROM missions mm
+                  WHERE mm.sejour_id = s.id AND mm.statut <> 'annulee'),
+        vol    = COALESCE((SELECT mm.vol FROM missions mm
+                           WHERE mm.sejour_id = s.id AND mm.statut <> 'annulee'
+                           ORDER BY mm.id LIMIT 1), '')
+      WHERE s.id = $1`, [cur.sejour_id]);
+  }
+
   if (parsed.data.allocation_utilisee === true) {
     await q('UPDATE voyageurs SET allocation_derniere = $1 WHERE id = $2',
       [m.depart ?? new Date().toISOString().slice(0, 10), cur.voyageur_id]);
@@ -480,10 +595,22 @@ missionsRouter.put('/:id', proprietaire, async (req, res) => {
 });
 
 async function purgeMission(id, code, userId) {
+  const cur = (await q(
+    'SELECT sejour_id, voyageur_id, solde_avant FROM missions WHERE id = $1', [id])).rows[0];
+  const sid = cur?.sejour_id;
+  if (cur && cur.solde_avant != null) {
+    await q('UPDATE voyageurs SET solde_devises = $1 WHERE id = $2',
+      [cur.solde_avant, cur.voyageur_id]);
+  }
   await q('DELETE FROM paiements WHERE mission_id = $1', [id]);
   await q('DELETE FROM tranches_devises WHERE mission_id = $1', [id]);
   await q('DELETE FROM demandes_suppression WHERE mission_id = $1', [id]);
   await q('DELETE FROM missions WHERE id = $1', [id]);
+  if (sid) {
+    const reste = Number((await q(
+      'SELECT COUNT(*) AS n FROM missions WHERE sejour_id = $1', [sid])).rows[0].n);
+    if (!reste) await q('DELETE FROM sejours WHERE id = $1', [sid]);
+  }
   await q(`INSERT INTO audit_log (user_id, action, entite, entite_id, details)
            VALUES ($1,'delete','mission',$2,$3)`,
     [userId, id, JSON.stringify({ code })]);
@@ -585,7 +712,7 @@ missionsRouter.post('/:id/cloture', adminSeul, async (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: 'Données invalides.' });
 
   const m = (await q(
-    `SELECT m.*, v.comm_mode AS v_mode, v.comm_val AS v_val,
+    `SELECT m.*, v.comm_mode AS v_mode, v.comm_val AS v_val, v.est_admin,
             v.devise_compte AS v_devise, v.solde_devises AS v_solde
      FROM missions m JOIN voyageurs v ON v.id = m.voyageur_id WHERE m.id = $1`,
     [id])).rows[0];
@@ -594,8 +721,11 @@ missionsRouter.post('/:id/cloture', adminSeul, async (req, res) => {
 
   const { kg } = await valiseDe(id);
   const d = parsed.data;
+  m.part_sejour_calc = await figerPartSejour(id);
 
-  if (d.factures_total == null) {
+  if (m.est_admin) {
+    d.factures_total = null;
+  } else if (d.factures_total == null) {
     const decl = await declareDe(id);
     if (decl > 0) d.factures_total = Math.round(decl * 100) / 100;
   }
@@ -624,7 +754,11 @@ missionsRouter.post('/:id/cloture', adminSeul, async (req, res) => {
   const tMoyen = marchDevise > 0 ? marchDA / marchDevise : Number(reglages.taux_officiel);
 
   const tPar = tauxParallele(reglages, m.v_devise, tMoyen);
-  let taxesCarteDA = Math.round(marchDevise * pct * tPar);
+  let taxesCarteDA = m.est_admin ? 0 : Math.round(marchDevise * pct * tPar);
+  if (m.est_admin && Number(m.douane) !== 0) {
+    await q('UPDATE missions SET douane = 0 WHERE id = $1', [id]);
+    m.douane = 0;
+  }
   if (d.factures_total != null) {
 
     const taxes = m.taxes_reelles != null
@@ -636,6 +770,8 @@ missionsRouter.post('/:id/cloture', adminSeul, async (req, res) => {
     const valDeclaree = Math.round(d.factures_total * Number(reglages.taux_officiel));
     const dispo = Number(m.v_solde) + marchDevise;
     const soldeNouveau = Math.max(0, dispo - d.factures_total - fraisCarteDevise);
+    await q('UPDATE missions SET solde_avant = $1 WHERE id = $2',
+      [Number(m.v_solde), id]);
     await q('UPDATE voyageurs SET solde_devises = $1 WHERE id = $2',
       [soldeNouveau, m.voyageur_id]);
     await q('UPDATE missions SET douane = $1, factures_total = $2, val_declaree = $3 WHERE id = $4',
@@ -663,6 +799,14 @@ missionsRouter.post('/:id/cloture', adminSeul, async (req, res) => {
   await q(`INSERT INTO audit_log (user_id, action, entite, entite_id, details)
            VALUES ($1,'cloture','mission',$2,$3)`,
     [req.user.sub, id, JSON.stringify({ attendu: d.attendu, commission, marge_ifu_30: marge30 })]);
+
+  if (m.sejour_id) {
+    const reste = Number((await q(
+      `SELECT COUNT(*) AS n FROM missions
+       WHERE sejour_id = $1 AND statut NOT IN ('cloturee', 'annulee')`,
+      [m.sejour_id])).rows[0].n);
+    if (!reste) await q('UPDATE sejours SET cloture = TRUE WHERE id = $1', [m.sejour_id]);
+  }
   res.json(rows[0]);
 });
 

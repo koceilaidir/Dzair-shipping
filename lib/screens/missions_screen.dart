@@ -66,7 +66,8 @@ class _MissionsScreenState extends State<MissionsScreen> {
     return _nn(m, 'billet') + _nn(m, 'dem_cout') + _nn(m, 'frais_visa') +
         (pocheNette > 0 ? pocheNette : 0) +
         _nn(m, 'douane') + _nn(m, 'taxes_carte') + _nn(m, 'autres') + _nn(m, 'manques_da') +
-        _nn(m, 'saisie_da') + (m['valise_sup'] == true ? _nn(m, 'valise_sup_prix') : 0);
+        _nn(m, 'saisie_da') + (m['valise_sup'] == true ? _nn(m, 'valise_sup_prix') : 0) +
+        _nn(m, 'part_sejour_da');
   }
   num _benefDe(Map m) {
     final base = m['statut'] == 'cloturee' ? _nn(m, 'attendu') : _nn(m, 'revenu');
@@ -199,8 +200,24 @@ class _MissionsScreenState extends State<MissionsScreen> {
               style: const TextStyle(color: DzColors.txt2, fontSize: 13.5,
                   fontWeight: FontWeight.w700)),
         ),
-        title: Text('${m['code']} · ${m['voyageur_nom']}',
-            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+        title: Row(children: [
+          Flexible(
+            child: Text('${m['code']} · ${m['voyageur_nom']}',
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+          ),
+          if (m['est_admin'] == true) ...[
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2.5),
+              decoration: BoxDecoration(
+                  color: DzColors.card2, borderRadius: BorderRadius.circular(99)),
+              child: const Text('ADMIN',
+                  style: TextStyle(color: DzColors.lime, fontSize: 9,
+                      fontWeight: FontWeight.w800, letterSpacing: .6)),
+            ),
+          ],
+        ]),
         subtitle: Text(
             '${m['vol'] ?? ''} · ${dateFr(m['depart'])} · '
             '${num.parse('${m['kg_total'] ?? 0}').toStringAsFixed(1)} kg',
@@ -236,15 +253,17 @@ class _MissionsScreenState extends State<MissionsScreen> {
 
   Future<void> _openCreate() async {
     List<dynamic> voyageurs;
+    List<dynamic> admins;
     try {
       voyageurs = await Api.get('/voyageurs') as List;
+      admins = await Api.get('/admins') as List;
     } on ApiException catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
       }
       return;
     }
-    if (voyageurs.isEmpty) {
+    if (voyageurs.isEmpty && admins.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Ajoute d’abord un voyageur.')));
@@ -254,25 +273,25 @@ class _MissionsScreenState extends State<MissionsScreen> {
     if (!mounted) return;
 
     final vol = TextEditingController(text: 'AH — CAN→ALG');
-    final billet = TextEditingController(text: '110000');
-    final objectif = TextEditingController(text: '20000');
     final heureDepart = TextEditingController();
     final heureArrivee = TextEditingController();
     DateTime depart = DateTime.now();
     DateTime? retour;
     String demType = 'multiple';
     final selected = <int>{};
+    final selectedAdmins = <int>{};
     bool saving = false;
 
     await showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(builder: (ctx, setSt) {
         Future<void> save() async {
-          if (selected.isEmpty || saving) return;
+          if ((selected.isEmpty && selectedAdmins.isEmpty) || saving) return;
           setSt(() => saving = true);
           try {
             await Api.post('/missions', {
               'voyageur_ids': selected.toList(),
+              'admin_user_ids': selectedAdmins.toList(),
               'vol': vol.text.trim(),
               'depart': isoDate(depart),
               'retour': retour == null ? null : isoDate(retour!),
@@ -280,9 +299,7 @@ class _MissionsScreenState extends State<MissionsScreen> {
                 'heure_depart': heureDepart.text.trim(),
               if (heureArrivee.text.trim().isNotEmpty)
                 'heure_arrivee': heureArrivee.text.trim(),
-              'billet': num.tryParse(billet.text) ?? 0,
               'dem_type': demType,
-              'objectif': num.tryParse(objectif.text) ?? 20000,
             });
             if (ctx.mounted) Navigator.pop(ctx);
             _load();
@@ -311,6 +328,10 @@ class _MissionsScreenState extends State<MissionsScreen> {
                   TextField(textCapitalization: TextCapitalization.characters, controller: vol,
                       decoration: const InputDecoration(labelText: 'N° de vol / billet')),
                   const SizedBox(height: 16),
+                  const Text('DATES DU VOL DES ADMINS',
+                      style: TextStyle(color: DzColors.mut, fontSize: 11,
+                          fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+                  const SizedBox(height: 8),
                   Row(children: [
                     Expanded(child: DzDateField(
                         label: 'Départ', value: depart,
@@ -320,6 +341,11 @@ class _MissionsScreenState extends State<MissionsScreen> {
                         label: 'Retour', value: retour,
                         onChanged: (d) => setSt(() => retour = d))),
                   ]),
+                  const SizedBox(height: 6),
+                  const Text(
+                      'Ce sont les dates du séjour. Un voyageur qui part plus tard ou '
+                      'rentre plus tôt — tu ajustes ses dates sur sa fiche après.',
+                      style: TextStyle(color: DzColors.mut, fontSize: 10.5, height: 1.4)),
                   const SizedBox(height: 16),
                   Row(children: [
                     Expanded(child: TextField(controller: heureDepart,
@@ -333,19 +359,10 @@ class _MissionsScreenState extends State<MissionsScreen> {
                             labelText: 'Atterrissage (HH:mm)', hintText: '06:30'))),
                   ]),
                   const SizedBox(height: 6),
-                  const Text('Heures locales — elles alimentent l’avion de suivi du vol sur le tableau de bord.',
+                  const Text('Heures locales — elles alimentent l’avion de suivi du vol '
+                      'sur le tableau de bord.',
                       style: TextStyle(color: DzColors.mut, fontSize: 10.5)),
                   const SizedBox(height: 12),
-                  Row(children: [
-                    Expanded(child: TextField(controller: billet,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(labelText: 'Billet A/R (DA)'))),
-                    const SizedBox(width: 12),
-                    Expanded(child: TextField(controller: objectif,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(labelText: 'Objectif bénéf'))),
-                  ]),
-                  const SizedBox(height: 16),
                   DropdownButtonFormField<String>(
                     initialValue: demType,
                     dropdownColor: DzColors.card2,
@@ -359,11 +376,63 @@ class _MissionsScreenState extends State<MissionsScreen> {
                     onChanged: (x) => setSt(() => demType = x ?? 'multiple'),
                   ),
                   const SizedBox(height: 20),
+                  const Text('ADMINS DU VOYAGE',
+                      style: TextStyle(color: DzColors.mut, fontSize: 11,
+                          fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+                  const SizedBox(height: 4),
+                  const Text(
+                      'Coche qui part. Chaque admin coché a sa propre mission '
+                      '(billet, démarches, valise) sans carte auto-entrepreneur.',
+                      style: TextStyle(color: DzColors.mut, fontSize: 11)),
+                  const SizedBox(height: 8),
+                  ...admins.map((a) {
+                    final id = a['id'] as int;
+                    final on = selectedAdmins.contains(id);
+                    return CheckboxListTile(
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                      activeColor: DzColors.lime,
+                      checkColor: DzColors.inkOnLime,
+                      value: on,
+                      onChanged: (x) => setSt(() =>
+                          x! ? selectedAdmins.add(id) : selectedAdmins.remove(id)),
+                      title: Text('${a['nom']}',
+                          style: const TextStyle(fontSize: 13.5, color: DzColors.txt)),
+                      subtitle: const Text('admin — prend en charge les dépenses du séjour',
+                          style: TextStyle(color: DzColors.mut, fontSize: 11)),
+                    );
+                  }),
+                  if (selectedAdmins.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+                      decoration: BoxDecoration(
+                          color: DzColors.card2,
+                          borderRadius: BorderRadius.circular(12)),
+                      child: const Row(children: [
+                        Icon(Icons.info_outline_rounded,
+                            size: 16, color: DzColors.lime),
+                        SizedBox(width: 9),
+                        Expanded(
+                          child: Text(
+                              'Un admin est du voyage : plus d’argent de poche pour '
+                              'personne. Les dépenses sur place (hôtel, nourriture, '
+                              'transport) se divisent entre tous les membres du séjour '
+                              'et font monter le prix du kilo à viser.',
+                              style: TextStyle(color: DzColors.txt2,
+                                  fontSize: 11, height: 1.45)),
+                        ),
+                      ]),
+                    ),
+                  ],
+                  const SizedBox(height: 20),
                   const Text('ASSIGNER LES VOYAGEURS',
                       style: TextStyle(color: DzColors.mut, fontSize: 11,
                           fontWeight: FontWeight.w700, letterSpacing: 1.2)),
                   const SizedBox(height: 4),
-                  const Text('Une fiche mission sera créée pour chacun (sa valise, ses frais).',
+                  const Text(
+                      'Une fiche mission sera créée pour chacun (sa valise, ses frais). '
+                      'Billet et objectif s’ajoutent ensuite sur chaque fiche.',
                       style: TextStyle(color: DzColors.mut, fontSize: 11)),
                   const SizedBox(height: 8),
 
@@ -405,9 +474,9 @@ class _MissionsScreenState extends State<MissionsScreen> {
                     child: saving
                         ? const SizedBox(height: 18, width: 18,
                             child: CircularProgressIndicator(strokeWidth: 2))
-                        : Text(selected.isEmpty
-                            ? 'Sélectionne au moins un voyageur'
-                            : 'Créer ${selected.length} mission(s)'),
+                        : Text(selected.isEmpty && selectedAdmins.isEmpty
+                            ? 'Sélectionne au moins une personne'
+                            : 'Créer ${selected.length + selectedAdmins.length} mission(s)'),
                   ),
                 ]),
               ),

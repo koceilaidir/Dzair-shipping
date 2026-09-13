@@ -22,7 +22,8 @@ const loginLimiter = rateLimit({
 });
 
 const loginSchema = z.object({
-  email: z.string().email().max(200),
+  identifiant: z.string().trim().min(1).max(200).optional(),
+  email: z.string().trim().min(1).max(200).optional(),
   password: z.string().min(1).max(200),
   souvenir: z.boolean().optional().default(false),
 });
@@ -31,10 +32,13 @@ authRouter.post('/login', loginLimiter, async (req, res) => {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Requête invalide.' });
 
-  const { email, password, souvenir } = parsed.data;
+  const { password, souvenir } = parsed.data;
+  const saisie = (parsed.data.identifiant || parsed.data.email || '').trim().toLowerCase();
+  if (!saisie) return res.status(400).json({ error: 'Requête invalide.' });
   const { rows } = await q(
-    'SELECT id, email, password_hash, role, nom, actif FROM users WHERE email = $1',
-    [email.toLowerCase()],
+    `SELECT id, email, username, password_hash, role, nom, actif FROM users
+     WHERE lower(email) = $1 OR lower(username) = $1 LIMIT 1`,
+    [saisie],
   );
   const user = rows[0];
 
@@ -71,7 +75,7 @@ export const requireRole = (...roles) => (req, res, next) => {
 
 authRouter.get('/moi', requireAuth, async (req, res) => {
   const u = (await q(`
-    SELECT u.id, u.email, u.nom, u.role, u.tel,
+    SELECT u.id, u.email, u.username, u.nom, u.role, u.tel,
            (u.photo IS NOT NULL) AS a_photo,
            v.id IS NOT NULL AS est_voyageur, v.adresse, v.wilaya
     FROM users u LEFT JOIN voyageurs v ON v.user_id = u.id
@@ -85,25 +89,34 @@ authRouter.put('/moi', requireAuth, async (req, res) => {
     nom: z.string().trim().min(2).max(120).optional(),
     tel: z.string().max(40).optional(),
     email: z.string().email().max(200).optional(),
+    username: z.string().trim().min(3).max(40)
+      .regex(/^[a-zA-Z0-9._-]+$/, 'caractères non autorisés').optional(),
     adresse: z.string().max(300).optional(),
     wilaya: z.string().max(80).optional(),
     password: z.string().min(8).max(200).optional(),
   }).safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({
-      error: 'Données invalides (mot de passe : 8 caractères minimum, email valide).' });
+      error: 'Données invalides (mot de passe : 8 caractères minimum, email valide, '
+        + 'nom d’utilisateur : 3 caractères minimum, lettres, chiffres, . _ -).' });
   }
   const d = parsed.data;
   if (d.email !== undefined) {
     const mail = d.email.trim().toLowerCase();
-    const deja = (await q('SELECT id FROM users WHERE email = $1 AND id <> $2',
+    const deja = (await q('SELECT id FROM users WHERE lower(email) = $1 AND id <> $2',
       [mail, req.user.sub])).rows[0];
     if (deja) return res.status(409).json({ error: 'Cet email est déjà pris.' });
     d.email = mail;
   }
+  if (d.username !== undefined) {
+    const deja = (await q('SELECT id FROM users WHERE lower(username) = $1 AND id <> $2',
+      [d.username.toLowerCase(), req.user.sub])).rows[0];
+    if (deja) return res.status(409).json({ error: 'Ce nom d’utilisateur est déjà pris.' });
+  }
   const sets = [];
   const vals = [];
   if (d.email !== undefined) { vals.push(d.email); sets.push(`email = $${vals.length}`); }
+  if (d.username !== undefined) { vals.push(d.username); sets.push(`username = $${vals.length}`); }
   if (d.nom !== undefined) { vals.push(d.nom); sets.push(`nom = $${vals.length}`); }
   if (d.tel !== undefined) { vals.push(d.tel.trim()); sets.push(`tel = $${vals.length}`); }
   if (d.password !== undefined) {
@@ -131,7 +144,7 @@ authRouter.put('/moi', requireAuth, async (req, res) => {
       mdp_change: d.password !== undefined,
     })]);
   const u = (await q(`
-    SELECT u.id, u.email, u.nom, u.role, u.tel,
+    SELECT u.id, u.email, u.username, u.nom, u.role, u.tel,
            (u.photo IS NOT NULL) AS a_photo,
            v.id IS NOT NULL AS est_voyageur, v.adresse, v.wilaya
     FROM users u LEFT JOIN voyageurs v ON v.user_id = u.id

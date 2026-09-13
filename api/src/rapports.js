@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { q } from './db.js';
 import { requireAuth, requireRole } from './auth.js';
 import { getReglages } from './reglages.js';
+import { SQL_PART_SEJOUR } from './sejours.js';
 
 export const rapportsRouter = Router();
 
@@ -150,6 +151,8 @@ rapportsRouter.get('/finance', async (_req, res) => {
 
   const missions = (await q(`
     SELECT m.*, v.nom AS voyageur_nom, v.devise_compte, v.comm_mode AS v_mode, v.comm_val AS v_val,
+           v.est_admin,
+           ${SQL_PART_SEJOUR} AS part_sejour_calc,
            COALESCE((SELECT SUM(kg*prix_kg) FROM produits_mission WHERE mission_id=m.id),0) AS revenu,
            COALESCE((SELECT SUM(usd) FROM tranches_devises
                      WHERE mission_id=m.id AND motif='voyage'),0) AS marchandise_devise,
@@ -170,6 +173,7 @@ rapportsRouter.get('/finance', async (_req, res) => {
     const tp = Number(m.devise_compte === 'EUR'
       ? reglages.taux_parallele_eur : reglages.taux_parallele_usd);
     const tPar = Number.isFinite(tp) && tp > 0 ? tp : tMoyen;
+    if (m.est_admin) return 0;
     return m.factures_total != null
       ? Math.round(Number(m.factures_total) * pct * tPar)
       : Math.round(mdev * pct * tPar);
@@ -180,9 +184,10 @@ rapportsRouter.get('/finance', async (_req, res) => {
     poche: Math.max(0,
       (Number(m.poche_da) > 0 ? Number(m.poche_da) : Number(m.jours) * Number(m.budget_jour))
         - Number(m.reste_da || 0)),
-    douane: Number(m.douane),
+    douane: m.est_admin ? 0 : Number(m.douane),
     carte: taxesCarteDe(m),
     demarches: Number(m.dem_cout) + Number(m.frais_visa || 0),
+    sejour: Math.round(Number(m.part_sejour_calc || 0)),
     autres: Number(m.autres) + Number(m.manques_da || 0) + Number(m.saisie_da || 0) +
       Number(m.frais_taxi || 0) + (m.valise_sup ? Number(m.valise_sup_prix || 0) : 0),
   });
@@ -190,7 +195,8 @@ rapportsRouter.get('/finance', async (_req, res) => {
 
   let sortis = 0, revenus = 0, netAgence = 0, creances = 0, partVoyageurs = 0;
   const parMois = {};
-  const fraisDetail = { billets: 0, poche: 0, douane: 0, carte: 0, demarches: 0, autres: 0 };
+  const fraisDetail = { billets: 0, poche: 0, douane: 0, carte: 0, demarches: 0,
+    sejour: 0, autres: 0 };
   const cloturees = missions.filter((m) => m.statut === 'cloturee');
 
   for (const m of cloturees) {

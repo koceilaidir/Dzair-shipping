@@ -12,22 +12,23 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _email = TextEditingController();
+  final _identifiant = TextEditingController();
   final _password = TextEditingController();
   bool _loading = false;
   bool _souvenir = true;
   String? _error;
 
   Future<void> _login() async {
-    final email = _email.text.trim();
+    final identifiant = _identifiant.text.trim();
     final password = _password.text;
-    if (email.isEmpty || password.isEmpty) {
-      setState(() => _error = 'Entre ton email et ton mot de passe.');
+    if (identifiant.isEmpty || password.isEmpty) {
+      setState(() =>
+          _error = 'Entre ton nom d’utilisateur (ou ton email) et ton mot de passe.');
       return;
     }
     setState(() { _loading = true; _error = null; });
     try {
-      await Api.login(email, password, souvenir: _souvenir);
+      await Api.login(identifiant, password, souvenir: _souvenir);
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => const Shell()),
@@ -61,9 +62,13 @@ class _LoginScreenState extends State<LoginScreen> {
                 const Center(child: DzairWordmark(fontSize: 30)),
                 const SizedBox(height: 40),
                 TextField(
-                  controller: _email,
-                  keyboardType: TextInputType.emailAddress,
-                  decoration: const InputDecoration(labelText: 'Email'),
+                  controller: _identifiant,
+                  autocorrect: false,
+                  keyboardType: TextInputType.text,
+                  textCapitalization: TextCapitalization.none,
+                  decoration: const InputDecoration(
+                    labelText: 'Nom d’utilisateur ou email',
+                  ),
                 ),
                 const SizedBox(height: 12),
                 TextField(

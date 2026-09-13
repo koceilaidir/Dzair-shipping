@@ -4,6 +4,7 @@ import PDFDocument from 'pdfkit';
 import { q } from './db.js';
 import { requireAuth, requireRole } from './auth.js';
 import { getReglages, coursOfficiels } from './reglages.js';
+import { SQL_PART_SEJOUR } from './sejours.js';
 
 const FONT = new URL('../fonts/NotoSansSC-Regular.otf', import.meta.url).pathname;
 const FONT_B = new URL('../fonts/NotoSansSC-Bold.otf', import.meta.url).pathname;
@@ -282,7 +283,8 @@ async function missionsOuvertes({ excludeId = 0, dep = null, ret = null } = {}) 
     SELECT m.id, m.code, m.objectif, m.kg_soute, m.cabine, m.billet, m.dem_cout, m.frais_visa,
            m.jours, m.budget_jour, m.douane, m.autres, m.manques_da, m.depart, m.retour,
            m.valise_sup, m.valise_sup_prix, m.valise_sup_kg, m.bagage_main, m.bagage_main_kg, m.saisie_da,
-           v.nom AS voyageur,
+           v.nom AS voyageur, v.est_admin,
+           ${SQL_PART_SEJOUR} AS part_sejour_calc,
            COALESCE((SELECT SUM(kg) FROM produits_mission p WHERE p.mission_id = m.id),0) AS kg_libre,
            COALESCE((SELECT SUM(kg*prix_kg) FROM produits_mission p WHERE p.mission_id = m.id),0) AS rev_libre
     FROM missions m JOIN voyageurs v ON v.id = m.voyageur_id
@@ -299,10 +301,11 @@ async function missionsOuvertes({ excludeId = 0, dep = null, ret = null } = {}) 
       rev += Number(a.quantite) * gainPiece(a);
     }
 
+    const partSejour = Math.round(Number(m.part_sejour_calc || 0));
     const frais = Number(m.billet) + Number(m.dem_cout) + Number(m.frais_visa || 0) +
       Number(m.jours) * Number(m.budget_jour) + Number(m.douane) + Number(m.autres) +
       Number(m.manques_da || 0) + Number(m.saisie_da || 0) +
-      (m.valise_sup ? Number(m.valise_sup_prix || 0) : 0);
+      (m.valise_sup ? Number(m.valise_sup_prix || 0) : 0) + partSejour;
 
     const cap = Number(m.kg_soute) + (m.valise_sup ? Number(m.valise_sup_kg || 23) : 0) +
       (m.bagage_main ? Number(m.bagage_main_kg || 8) : 0);
@@ -312,6 +315,7 @@ async function missionsOuvertes({ excludeId = 0, dep = null, ret = null } = {}) 
       mission_id: m.id, code: m.code, voyageur: m.voyageur, depart: m.depart, retour: m.retour,
       manque_da: aCouvrir, kg_dispo: kgLibre,
       a_couvrir: aCouvrir, kg_libre: kgLibre,
+      part_sejour: partSejour, est_admin: !!m.est_admin,
       seuil_kg: kgLibre > 0 ? aCouvrir / kgLibre : 0,
     });
   }
