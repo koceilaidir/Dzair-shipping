@@ -27,7 +27,7 @@ rapportsRouter.get('/ma-finance', requireAuth, async (req, res) => {
   const encours = missions.find((m) => m.statut !== 'cloturee');
   const tranchesEncours = encours
     ? (await q(
-        `SELECT usd, taux, devise, motif, source, created_at FROM tranches_devises
+        `SELECT usd, taux, devise, motif, source, date AS created_at FROM tranches_devises
          WHERE mission_id = $1 ORDER BY id`, [encours.id])).rows
     : [];
 
