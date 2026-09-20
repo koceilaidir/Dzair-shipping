@@ -439,17 +439,18 @@ class _InventaireScreenState extends State<InventaireScreen> {
                 if (sources > 1)
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                    decoration: BoxDecoration(color: DzColors.amber.withValues(alpha: .13), borderRadius: BorderRadius.circular(99)),
-                    child: Text('$sources chambres', style: const TextStyle(color: DzColors.amber, fontSize: 9.5, fontWeight: FontWeight.w700)),
+                    decoration: BoxDecoration(color: DzColors.card2, borderRadius: BorderRadius.circular(99)),
+                    child: Text('aussi dans $sources chambres',
+                        style: const TextStyle(color: DzColors.mut, fontSize: 9.5, fontWeight: FontWeight.w700)),
                   ),
                 Text(dateFr(l['bon_date']), style: const TextStyle(color: DzColors.mut, fontSize: 10)),
               ]),
               const SizedBox(height: 8),
 
               Text('${_n(l['poids_unit']).toStringAsFixed(2)} kg/pc · '
-                  '${l['mode'] == 'kg' ? '${_f(_n(l['prix']))} DA/kg' : '${_f(_n(l['prix']))} DA/pc'}\n'
-                  'manque ${_f(_n(l['manque_rmb']))} ¥/pc'
-                  '${_usdCny > 0 ? ' (≈ ${(_n(l['manque_rmb']) / _usdCny).toStringAsFixed(2)} \$)' : ''}',
+                  '${l['mode'] == 'kg' ? '${_f(_n(l['prix']))} DA/kg' : '${_f(_n(l['prix']))} DA/pc'} · '
+                  'manque ${l['manque_devise'] == 'DA' ? '${_f(_n(l['manque_da']))} DA' : '${_f(_n(l['manque_rmb']))} ¥'}/pc',
+                  maxLines: 2, overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: DzColors.mut, fontSize: 10.5, height: 1.45)),
               const Spacer(),
               Row(crossAxisAlignment: CrossAxisAlignment.end, children: [

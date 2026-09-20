@@ -482,10 +482,11 @@ class _MissionsScreenState extends State<MissionsScreen> {
                                     style: const TextStyle(
                                         color: DzColors.mut, fontSize: 12.5)),
                           ]);
-                      final boutons = Row(mainAxisSize: MainAxisSize.min, children: [
+                      final boutons = Wrap(spacing: 10, runSpacing: 10, children: [
                         _boutonSecondaire(
                             Icons.edit_calendar_outlined, 'Dates', _editerDates),
-                        const SizedBox(width: 10),
+                        _boutonSecondaire(Icons.delete_outline, 'Supprimer',
+                            () => _supprimerMission(s)),
                         _boutonPrincipal(Icons.add_rounded, 'Dépense', _ajouterDepense),
                       ]);
                       if (wide) {
@@ -518,9 +519,12 @@ class _MissionsScreenState extends State<MissionsScreen> {
                     Row(children: [
                       _lab('Passagers · ${passagers.length}'),
                       const Spacer(),
-                      const Text('un clic ouvre la fiche du passager',
-                          style: TextStyle(color: DzColors.mut2, fontSize: 11)),
+                      _boutonSecondaire(Icons.person_add_alt_1_outlined,
+                          'Ajouter', () => _openCreate(sejour: s)),
                     ]),
+                    const SizedBox(height: 6),
+                    const Text('un clic ouvre la fiche du passager',
+                        style: TextStyle(color: DzColors.mut2, fontSize: 11)),
                     const SizedBox(height: 10),
                     for (final p in passagers) ...[
                       _tuilePassager(p as Map, wide),
@@ -531,6 +535,73 @@ class _MissionsScreenState extends State<MissionsScreen> {
               }),
             ),
     );
+  }
+
+  Future<void> _supprimerMission(Map s) async {
+    final passagers = (s['passagers'] as List? ?? []);
+    final cloturees = passagers.where((p) => p['statut'] == 'cloturee').toList();
+    final depenses = (s['depenses'] as List? ?? []).length;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: DzColors.card,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Supprimer cette mission ?',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+        content: Column(mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start, children: [
+          if (cloturees.isNotEmpty)
+            Text(
+                'Impossible : ${cloturees.map((p) => '${p['voyageur_nom']}').join(', ')} '
+                'a/ont déjà été clôturé(s). Supprime ces passagers un par un '
+                'depuis leur fiche.',
+                style: const TextStyle(color: DzColors.red, fontSize: 12.5, height: 1.45))
+          else ...[
+            Text(
+                '${passagers.length} fiche(s) passager seront supprimées avec leurs '
+                'frais, leurs valises et leurs versements.',
+                style: const TextStyle(color: DzColors.txt2, fontSize: 12.5, height: 1.45)),
+            if (depenses > 0) ...[
+              const SizedBox(height: 8),
+              Text('$depenses dépense(s) du séjour seront également effacées.',
+                  style: const TextStyle(color: DzColors.amber, fontSize: 12.5)),
+            ],
+            const SizedBox(height: 8),
+            const Text('Les produits repartent au stock. C’est définitif.',
+                style: TextStyle(color: DzColors.mut, fontSize: 11.5)),
+          ],
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Annuler')),
+          if (cloturees.isEmpty)
+            FilledButton(
+              style: FilledButton.styleFrom(
+                  backgroundColor: DzColors.red, foregroundColor: Colors.white),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Supprimer'),
+            ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+
+    try {
+      await Api.delete('/missions/sejour/${_i(s['id'])}');
+      if (!mounted) return;
+      setState(() { _ouvertId = null; _ouvert = null; });
+      await _load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Mission supprimée.')));
+      }
+    } on ApiException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    }
   }
 
   Widget _boutonPrincipal(IconData ic, String t, VoidCallback onTap) => GestureDetector(
@@ -949,7 +1020,7 @@ class _MissionsScreenState extends State<MissionsScreen> {
     );
   }
 
-  Future<void> _openCreate() async {
+  Future<void> _openCreate({Map? sejour}) async {
     List<dynamic> voyageurs;
     List<dynamic> admins;
     try {
@@ -970,9 +1041,25 @@ class _MissionsScreenState extends State<MissionsScreen> {
     }
     if (!mounted) return;
 
-    final vol = TextEditingController(text: 'AH — CAN→ALG');
-    DateTime depart = DateTime.now();
-    DateTime? retour;
+    final ajout = sejour != null;
+    final dejaLa = <int>{
+      if (ajout)
+        for (final p in (sejour['passagers'] as List? ?? []))
+          _i((p as Map)['voyageur_id']),
+    };
+    if (ajout) {
+      voyageurs = voyageurs.where((v) => !dejaLa.contains(_i(v['id']))).toList();
+      admins = admins.where((a) => !dejaLa.contains(_i(a['voyageur_id'] ?? 0))).toList();
+    }
+
+    final vol = TextEditingController(
+        text: ajout ? '${sejour['vol'] ?? ''}' : 'AH — CAN→ALG');
+    DateTime depart = ajout && sejour['depart'] != null
+        ? DateTime.parse('${sejour['depart']}')
+        : DateTime.now();
+    DateTime? retour = ajout && sejour['retour'] != null
+        ? DateTime.parse('${sejour['retour']}')
+        : null;
     final selected = <int>{};
     final selectedAdmins = <int>{};
     bool saving = false;
@@ -990,9 +1077,10 @@ class _MissionsScreenState extends State<MissionsScreen> {
               'vol': vol.text.trim(),
               'depart': isoDate(depart),
               'retour': retour == null ? null : isoDate(retour!),
+              if (ajout) 'sejour_id': _i(sejour['id']),
             });
             if (ctx.mounted) Navigator.pop(ctx);
-            _load();
+            if (ajout) { await _rafraichirOuvert(); } else { _load(); }
           } on ApiException catch (e) {
             setSt(() => saving = false);
             if (ctx.mounted) {
@@ -1012,9 +1100,18 @@ class _MissionsScreenState extends State<MissionsScreen> {
               child: SingleChildScrollView(
                 child: Column(crossAxisAlignment: CrossAxisAlignment.stretch,
                     mainAxisSize: MainAxisSize.min, children: [
-                  const Text('Nouvelle mission',
-                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+                  Text(ajout ? 'Ajouter des passagers' : 'Nouvelle mission',
+                      style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+                  if (ajout) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                        'Mission en cours · ${_dateFr(sejour['depart'])} → '
+                        '${_dateFr(sejour['retour'])}. Les nouveaux passagers reprennent '
+                        'ces dates — tu les ajustes ensuite sur leur fiche.',
+                        style: const TextStyle(color: DzColors.mut, fontSize: 11.5, height: 1.4)),
+                  ],
                   const SizedBox(height: 18),
+                  if (!ajout) ...[
                   TextField(textCapitalization: TextCapitalization.characters, controller: vol,
                       decoration: const InputDecoration(labelText: 'N° de vol / billet')),
                   const SizedBox(height: 16),
@@ -1037,6 +1134,7 @@ class _MissionsScreenState extends State<MissionsScreen> {
                       'rentre plus tôt — tu ajustes ses dates sur sa fiche après.',
                       style: TextStyle(color: DzColors.mut, fontSize: 10.5, height: 1.4)),
                   const SizedBox(height: 20),
+                  ],
                   const Text('ADMINS DU VOYAGE',
                       style: TextStyle(color: DzColors.mut, fontSize: 11,
                           fontWeight: FontWeight.w700, letterSpacing: 1.2)),
@@ -1141,7 +1239,9 @@ class _MissionsScreenState extends State<MissionsScreen> {
                             child: CircularProgressIndicator(strokeWidth: 2))
                         : Text(selected.isEmpty && selectedAdmins.isEmpty
                             ? 'Sélectionne au moins une personne'
-                            : 'Créer ${selected.length + selectedAdmins.length} mission(s)'),
+                            : ajout
+                                ? 'Ajouter ${selected.length + selectedAdmins.length} passager(s)'
+                                : 'Créer ${selected.length + selectedAdmins.length} mission(s)'),
                   ),
                 ]),
               ),

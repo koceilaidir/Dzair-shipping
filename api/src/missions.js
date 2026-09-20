@@ -341,12 +341,22 @@ missionsRouter.post('/', adminSeul, async (req, res) => {
   const parsed = missionBase.extend({
     voyageur_ids: z.array(z.coerce.number().int()).optional().default([]),
     admin_user_ids: z.array(z.coerce.number().int()).optional().default([]),
+    sejour_id: z.coerce.number().int().optional(),
   }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Données invalides.' });
-  const { voyageur_ids, admin_user_ids, ...base } = parsed.data;
+  const { voyageur_ids, admin_user_ids, sejour_id, ...base } = parsed.data;
   if (!voyageur_ids.length && !admin_user_ids.length) {
     return res.status(400).json({ error: 'Choisis au moins un voyageur ou un admin.' });
   }
+  let sejourExistant = null;
+  if (sejour_id) {
+    sejourExistant = (await q('SELECT * FROM sejours WHERE id = $1', [sejour_id])).rows[0];
+    if (!sejourExistant) return res.status(404).json({ error: 'Mission introuvable.' });
+    base.vol = base.vol || sejourExistant.vol || '';
+    base.depart = base.depart ?? sejourExistant.depart;
+    base.retour = base.retour ?? sejourExistant.retour;
+  }
+
   const mois = moisDe(base.depart);
   const reglages = await getReglages();
 
@@ -411,7 +421,7 @@ missionsRouter.post('/', adminSeul, async (req, res) => {
     return res.status(409).json({ error: '🚫 ' + bloques.join(' · ') });
   }
 
-  const sejour = (await q(
+  const sejour = sejourExistant ?? (await q(
     `INSERT INTO sejours (vol, depart, retour) VALUES ($1,$2,$3) RETURNING id`,
     [base.vol || '', base.depart ?? null, base.retour ?? null])).rows[0];
 
@@ -601,6 +611,35 @@ async function purgeMission(id, code, userId) {
            VALUES ($1,'delete','mission',$2,$3)`,
     [userId, id, JSON.stringify({ code })]);
 }
+
+missionsRouter.delete('/sejour/:sid', adminSeul, async (req, res) => {
+  const sid = Number(req.params.sid);
+  const s = (await q('SELECT id, vol FROM sejours WHERE id = $1', [sid])).rows[0];
+  if (!s) return res.status(404).json({ error: 'Mission introuvable.' });
+
+  const passagers = (await q(
+    `SELECT m.id, m.code, m.statut, v.nom AS voyageur
+     FROM missions m JOIN voyageurs v ON v.id = m.voyageur_id
+     WHERE m.sejour_id = $1 ORDER BY m.code`, [sid])).rows;
+
+  const cloturees = passagers.filter((p) => p.statut === 'cloturee');
+  if (cloturees.length) {
+    return res.status(409).json({
+      error: 'Impossible : '
+        + cloturees.map((p) => `${p.voyageur} (${p.code})`).join(', ')
+        + ' — déjà clôturé(s). Supprime ces passagers un par un depuis leur fiche.',
+    });
+  }
+
+  for (const p of passagers) await purgeMission(p.id, p.code, req.user.sub);
+  await q('DELETE FROM depenses_sejour WHERE sejour_id = $1', [sid]);
+  await q('DELETE FROM sejours WHERE id = $1', [sid]);
+  await q(`INSERT INTO audit_log (user_id, action, entite, entite_id, details)
+           VALUES ($1,'delete','sejour',$2,$3)`,
+    [req.user.sub, sid,
+     JSON.stringify({ vol: s.vol, passagers: passagers.map((p) => p.code) })]);
+  res.json({ ok: true, supprimee: true, passagers: passagers.length });
+});
 
 missionsRouter.delete('/:id', adminSeul, async (req, res) => {
   const id = Number(req.params.id);
