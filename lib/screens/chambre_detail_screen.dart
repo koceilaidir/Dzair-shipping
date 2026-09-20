@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/api.dart';
 import '../theme.dart';
+import '../widgets/produit_form.dart';
 import '../widgets/date_field.dart';
 import 'chambres_screen.dart' show showChambreForm;
 import '../services/download.dart';
@@ -317,6 +318,18 @@ class _ChambreDetailScreenState extends State<ChambreDetailScreen> {
         ]),
       );
 
+  Future<void> _modifierLigne(int ligneId) async {
+    Map l;
+    try { l = await Api.get('/inventaire/lignes/$ligneId') as Map; }
+    on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      return;
+    }
+    if (!mounted) return;
+    await montrerEditionProduit(context, l);
+    if (mounted) _load();
+  }
+
   Future<void> _voirBon(int id) async {
     Map b;
     try { b = await Api.get('/inventaire/bons/$id') as Map; }
@@ -341,22 +354,31 @@ class _ChambreDetailScreenState extends State<ChambreDetailScreen> {
                 Text('${b['note']}', style: const TextStyle(color: DzColors.mut, fontSize: 12)),
               const SizedBox(height: 12),
               for (final l in lignes)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 5),
-                  child: Row(children: [
+                InkWell(
+                  borderRadius: BorderRadius.circular(10),
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    await _modifierLigne(_n(l['id']).toInt());
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 5),
+                    child: Row(children: [
                     Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                       Text('${l['produit']}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
                       Text('${_f(_n(l['quantite']))} pcs'
                           '${_n(l['rendu']) > 0 ? ' (−${_f(_n(l['rendu']))} rendues)' : ''}'
                           ' · ${_n(l['poids_total']).toStringAsFixed(1)} kg · '
                           '${l['mode'] == 'kg' ? '${_f(_n(l['prix']))} DA/kg' : '${_f(_n(l['prix']))} DA/pc'} · '
-                          'manque ${_f(_n(l['manque_rmb']))} ¥/pc · '
+                          'manque ${l['manque_devise'] == 'DA' ? '${_f(_n(l['manque_da']))} DA' : '${_f(_n(l['manque_rmb']))} ¥'}/pc · '
                           '${_f(_n(l['affecte']))} en valise',
                           style: const TextStyle(color: DzColors.mut, fontSize: 10.5)),
                     ])),
                     Text('${_f(l['mode'] == 'kg' ? _n(l['prix']) * _n(l['poids_total']) : _n(l['prix']) * _n(l['quantite']))} DA',
                         style: const TextStyle(color: DzColors.lime, fontSize: 12.5, fontWeight: FontWeight.w700)),
+                    const SizedBox(width: 6),
+                    const Icon(Icons.edit_outlined, size: 14, color: DzColors.mut),
                   ]),
+                ),
                 ),
               const SizedBox(height: 10),
               Row(children: [

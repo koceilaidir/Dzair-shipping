@@ -512,6 +512,150 @@ inventaireRouter.get('/lignes/:id', async (req, res) => {
     restant: Number(l.quantite) - affecte - rendu, rendu, retours, traces });
 });
 
+const ligneEditSchema = z.object({
+  produit: z.string().min(1).max(160),
+  quantite: z.coerce.number().positive(),
+  poids_total: z.coerce.number().positive(),
+  mode: z.enum(['kg', 'piece']).default('kg'),
+  prix: z.coerce.number().nonnegative().default(0),
+  manque_rmb: z.coerce.number().nonnegative().default(0),
+  manque_devise: z.enum(['RMB', 'DA']).default('RMB'),
+  manque_da: z.coerce.number().nonnegative().optional().nullable(),
+});
+
+const arrondi = (v, n) => Math.round(Number(v) * 10 ** n) / 10 ** n;
+
+async function engagementLigne(id) {
+  const r = (await q(
+    `SELECT COALESCE((SELECT SUM(quantite) FROM affectations WHERE ligne_id = $1),0) AS affecte,
+            COALESCE((SELECT SUM(quantite) FROM retours WHERE ligne_id = $1),0) AS rendu`,
+    [id])).rows[0];
+  return { affecte: Number(r.affecte), rendu: Number(r.rendu) };
+}
+
+inventaireRouter.put('/lignes/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  const p = ligneEditSchema.safeParse(req.body);
+  if (!p.success) return res.status(400).json({ error: 'Produit invalide.' });
+  const d = p.data;
+
+  const av = (await q(
+    `SELECT l.id, l.produit, l.quantite, l.poids_total, l.mode, l.prix,
+            l.manque_rmb, l.manque_devise, l.manque_da, c.nom AS chambre_nom
+     FROM bon_lignes l JOIN bons b ON b.id = l.bon_id JOIN chambres c ON c.id = b.chambre_id
+     WHERE l.id = $1`, [id])).rows[0];
+  if (!av) return res.status(404).json({ error: 'Produit introuvable.' });
+
+  const { affecte, rendu } = await engagementLigne(id);
+  const minimum = affecte + rendu;
+  if (d.quantite < minimum) {
+    return res.status(409).json({
+      error: `Quantité trop basse : ${minimum} pièce(s) sont déjà en valise ou rendues. `
+        + 'Retire-les d’abord des valises.',
+    });
+  }
+
+  const manqueDa = d.manque_devise === 'DA' ? (d.manque_da ?? 0) : null;
+  const manqueRmb = d.manque_devise === 'RMB' ? d.manque_rmb : 0;
+
+  await q(
+    `UPDATE bon_lignes SET produit = $1, quantite = $2, poids_total = $3, mode = $4, prix = $5,
+       manque_rmb = $6, manque_devise = $7, manque_da = $8 WHERE id = $9`,
+    [d.produit.trim(), d.quantite, arrondi(d.poids_total, 3), d.mode, arrondi(d.prix, 2),
+     manqueRmb, d.manque_devise, manqueDa, id]);
+
+  const champs = {
+    produit: [av.produit, d.produit.trim()],
+    quantite: [Number(av.quantite), d.quantite],
+    poids_total: [Number(av.poids_total), arrondi(d.poids_total, 3)],
+    mode: [av.mode, d.mode],
+    prix: [Number(av.prix), arrondi(d.prix, 2)],
+    manque_devise: [av.manque_devise, d.manque_devise],
+    manque_rmb: [Number(av.manque_rmb), manqueRmb],
+    manque_da: [av.manque_da == null ? null : Number(av.manque_da), manqueDa],
+  };
+  const modifs = {};
+  for (const [cle, [avant, apres]] of Object.entries(champs)) {
+    if (String(avant) !== String(apres)) modifs[cle] = { avant, apres };
+  }
+
+  const missions = (await q(
+    `SELECT m.code, m.statut FROM affectations a JOIN missions m ON m.id = a.mission_id
+     WHERE a.ligne_id = $1 ORDER BY m.code`, [id])).rows;
+
+  if (Object.keys(modifs).length) {
+    await audit(req.user.sub, 'produit_modif', 'ligne', id, {
+      produit: d.produit.trim(), chambre: av.chambre_nom, modifs,
+      missions_touchees: missions.map((m) => m.code),
+      missions_cloturees: missions.filter((m) => m.statut === 'cloturee').map((m) => m.code),
+    });
+  }
+  res.json({ ok: true, modifs, missions_touchees: missions });
+});
+
+inventaireRouter.delete('/lignes/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  const l = (await q(
+    `SELECT l.id, l.produit, l.quantite, l.poids_total, c.nom AS chambre_nom
+     FROM bon_lignes l JOIN bons b ON b.id = l.bon_id JOIN chambres c ON c.id = b.chambre_id
+     WHERE l.id = $1`, [id])).rows[0];
+  if (!l) return res.status(404).json({ error: 'Produit introuvable.' });
+
+  const aff = (await q(
+    `SELECT a.id, a.quantite, a.mission_id, m.code, m.statut, m.valise_close
+     FROM affectations a JOIN missions m ON m.id = a.mission_id
+     WHERE a.ligne_id = $1 ORDER BY m.code`, [id])).rows;
+
+  const bloquees = [];
+  const retirees = [];
+  for (const a of aff) {
+    if (a.statut === 'cloturee') {
+      bloquees.push({ code: a.code, quantite: Number(a.quantite), motif: 'mission clôturée' });
+      continue;
+    }
+    if (a.valise_close) {
+      bloquees.push({ code: a.code, quantite: Number(a.quantite), motif: 'valise close' });
+      continue;
+    }
+    const fac = (await q(
+      `SELECT numero FROM factures WHERE mission_id = $1 AND statut = 'emise'
+         AND lignes @> $2::jsonb LIMIT 1`,
+      [a.mission_id, JSON.stringify([{ affectation_id: a.id }])])).rows[0];
+    if (fac) {
+      bloquees.push({ code: a.code, quantite: Number(a.quantite), motif: `facture n° ${fac.numero}` });
+      continue;
+    }
+    retirees.push(a);
+  }
+
+  for (const a of retirees) await q('DELETE FROM affectations WHERE id = $1', [a.id]);
+
+  const detail = {
+    produit: l.produit, chambre: l.chambre_nom,
+    retire_des_valises: retirees.map((a) => ({ code: a.code, quantite: Number(a.quantite) })),
+    conserve: bloquees,
+  };
+
+  if (!bloquees.length) {
+    await q('DELETE FROM bon_lignes WHERE id = $1', [id]);
+    await audit(req.user.sub, 'produit_rendu', 'ligne', id,
+      { ...detail, quantite: Number(l.quantite), supprime: true });
+    return res.json({ ok: true, supprime: true, retirees: detail.retire_des_valises, bloquees });
+  }
+
+  const { affecte, rendu } = await engagementLigne(id);
+  const nouvelleQte = affecte + rendu;
+  const poidsUnit = Number(l.poids_total) / Number(l.quantite);
+  await q('UPDATE bon_lignes SET quantite = $1, poids_total = $2 WHERE id = $3',
+    [nouvelleQte, arrondi(poidsUnit * nouvelleQte, 3), id]);
+  await audit(req.user.sub, 'produit_rendu', 'ligne', id, {
+    ...detail, supprime: false,
+    quantite: { avant: Number(l.quantite), apres: nouvelleQte },
+  });
+  res.json({ ok: true, supprime: false, quantite: nouvelleQte,
+    retirees: detail.retire_des_valises, bloquees });
+});
+
 inventaireRouter.post('/affectations', async (req, res) => {
   const p = z.object({
     mission_id: z.coerce.number().int(),

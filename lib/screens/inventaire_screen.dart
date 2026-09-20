@@ -5,6 +5,7 @@ import '../services/api.dart';
 import '../services/upload.dart';
 import '../theme.dart';
 import '../widgets/date_field.dart';
+import '../widgets/produit_form.dart';
 import 'bon_screen.dart';
 
 class InventaireScreen extends StatefulWidget {
@@ -630,7 +631,37 @@ class _InventaireScreenState extends State<InventaireScreen> {
                       ]),
                     ]),
                   ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 16),
+                Row(children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () async {
+                        Navigator.pop(ctx);
+                        final fait = await montrerEditionProduit(context, l);
+                        if (!mounted) return;
+                        await _load();
+                        if (fait && mounted) _voirTrace(_n(l['id']).toInt());
+                      },
+                      icon: const Icon(Icons.edit_outlined, size: 15),
+                      label: const Text('Modifier'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(foregroundColor: DzColors.red),
+                      onPressed: () async {
+                        Navigator.pop(ctx);
+                        await montrerRetourProduit(context, l);
+                        if (!mounted) return;
+                        await _load();
+                      },
+                      icon: const Icon(Icons.undo_rounded, size: 15),
+                      label: const Text('Rendre'),
+                    ),
+                  ),
+                ]),
+                const SizedBox(height: 6),
                 TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Fermer')),
               ]),
             )),
