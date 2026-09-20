@@ -1,1 +1,83 @@
-
+name: Deploiement
+ 
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+ 
+concurrency:
+  group: deploiement-production
+  cancel-in-progress: false
+ 
+jobs:
+  publier:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+ 
+    steps:
+      - name: Recuperation du code
+        uses: actions/checkout@v4
+ 
+      - name: Controle des polices
+        run: |
+          set -e
+          for f in assets/fonts/PlusJakartaSans-400.ttf assets/fonts/PlusJakartaSans-500.ttf; do
+            test -f "$f" || { echo "Police manquante dans le depot : $f"; exit 1; }
+          done
+ 
+      - name: Installation de Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+ 
+      - name: Dependances
+        run: flutter pub get
+ 
+      - name: Compilation du site
+        run: flutter build web --release --dart-define=API_URL=https://dzairshipping.com/api
+ 
+      - name: Archive du site
+        run: tar -czf web.tgz -C build/web .
+ 
+      - name: Preparation de la cle SSH
+        env:
+          CLE: ${{ secrets.VPS_SSH_KEY }}
+          HOTE: ${{ secrets.VPS_HOST }}
+        run: |
+          set -e
+          test -n "$CLE" || { echo "Secret VPS_SSH_KEY absent."; exit 1; }
+          test -n "$HOTE" || { echo "Secret VPS_HOST absent."; exit 1; }
+          mkdir -p ~/.ssh
+          printf '%s\n' "$CLE" > ~/.ssh/deploiement
+          chmod 600 ~/.ssh/deploiement
+          ssh-keyscan -T 20 "$HOTE" >> ~/.ssh/known_hosts 2>/dev/null
+          chmod 644 ~/.ssh/known_hosts
+ 
+      - name: Envoi du site et du script
+        env:
+          HOTE: ${{ secrets.VPS_HOST }}
+        run: |
+          set -e
+          scp -i ~/.ssh/deploiement -C -o IPQoS=throughput \
+            web.tgz deploy/vps/deploy-serveur.sh "root@$HOTE:/tmp/"
+ 
+      - name: Mise a jour du serveur
+        env:
+          HOTE: ${{ secrets.VPS_HOST }}
+        run: |
+          set -e
+          ssh -i ~/.ssh/deploiement -o ServerAliveInterval=20 "root@$HOTE" \
+            "sh /tmp/deploy-serveur.sh"
+ 
+      - name: Verification du site en ligne
+        run: |
+          set -e
+          sleep 6
+          code=$(curl -s -o /dev/null -w '%{http_code}' https://dzairshipping.com/)
+          echo "Page d'accueil : $code"
+          test "$code" = "200" || exit 1
+ 
+      - name: Nettoyage
+        if: always()
+        run: rm -f ~/.ssh/deploiement web.tgz
