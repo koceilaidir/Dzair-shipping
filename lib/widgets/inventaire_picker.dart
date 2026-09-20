@@ -145,7 +145,9 @@ Future<bool> showInventairePicker(BuildContext context, {
         backgroundColor: DzColors.card,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 720, maxHeight: 640),
+          constraints: BoxConstraints(
+              maxWidth: 720,
+              maxHeight: MediaQuery.of(ctx).size.height * .88),
           child: Padding(padding: const EdgeInsets.fromLTRB(22, 22, 22, 16),
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
               Text(main ? 'Remplir le bagage à main — 8 kg, non déclaré' : 'Ajouter depuis l’inventaire',

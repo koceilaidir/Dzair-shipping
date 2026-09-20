@@ -183,6 +183,11 @@ class _VoyageursScreenState extends State<VoyageursScreen> {
         badge('Passeport expire le ${dateFr(isoDate(pass))}', DzColors.amber);
       }
     }
+    if (v['sans_carte'] == true) {
+      badge('Sans carte auto-entrepreneur', DzColors.amber);
+      return out;
+    }
+
     final aut = parse(v['autorisation_expire']);
     if (aut != null) {
       if (aut.isBefore(now)) {
@@ -260,6 +265,7 @@ class _VoyageursScreenState extends State<VoyageursScreen> {
     String commMode = v?['comm_mode'] ?? 'pct';
     String deviseCompte = v?['devise_compte'] ?? 'USD';
     bool allocationEligible = v?['allocation_eligible'] ?? true;
+    bool sansCarte = v?['sans_carte'] == true;
     bool detteActive = v?['dette_active'] == true;
     bool saving = false;
     DateTime? passExp = v?['passeport_expire'] == null
@@ -283,9 +289,11 @@ class _VoyageursScreenState extends State<VoyageursScreen> {
             'dette_active': detteActive,
             'dette_montant': num.tryParse(detteMontant.text) ?? 0,
             'passeport_expire': passExp == null ? null : isoDate(passExp!),
-            'autorisation_expire': autExp == null ? null : isoDate(autExp!),
+            'autorisation_expire':
+                sansCarte || autExp == null ? null : isoDate(autExp!),
             'devise_compte': deviseCompte,
-            'allocation_eligible': allocationEligible,
+            'allocation_eligible': sansCarte ? false : allocationEligible,
+            'sans_carte': sansCarte,
             'nom_passeport': nomPass.text.trim(),
             'adresse': adresse.text.trim(),
             'wilaya': wilaya.text.trim(),
@@ -399,32 +407,55 @@ class _VoyageursScreenState extends State<VoyageursScreen> {
                           helperStyle: TextStyle(color: DzColors.mut, fontSize: 10.5)),
                     ),
                   ),
-                  const SizedBox(width: 12),
-                  SizedBox(
-                    width: 150,
-                    child: DropdownButtonFormField<String>(
-                      initialValue: deviseCompte,
-                      dropdownColor: DzColors.card2,
-                      decoration: const InputDecoration(labelText: 'Compte BEA en'),
-                      items: const [
-                        DropdownMenuItem(value: 'USD', child: Text('\$ Dollars')),
-                        DropdownMenuItem(value: 'EUR', child: Text('€ Euros')),
-                      ],
-                      onChanged: (x) => setSt(() => deviseCompte = x ?? 'USD'),
+                  if (!sansCarte) ...[
+                    const SizedBox(width: 12),
+                    SizedBox(
+                      width: 150,
+                      child: DropdownButtonFormField<String>(
+                        initialValue: deviseCompte,
+                        dropdownColor: DzColors.card2,
+                        decoration: const InputDecoration(labelText: 'Compte BEA en'),
+                        items: const [
+                          DropdownMenuItem(value: 'USD', child: Text('\$ Dollars')),
+                          DropdownMenuItem(value: 'EUR', child: Text('€ Euros')),
+                        ],
+                        onChanged: (x) => setSt(() => deviseCompte = x ?? 'USD'),
+                      ),
                     ),
-                  ),
+                  ],
                 ]),
-                const SizedBox(height: 6),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  activeThumbColor: DzColors.lime,
-                  title: const Text('Éligible à l’allocation touristique',
-                      style: TextStyle(fontSize: 13.5)),
-                  subtitle: const Text('750 € · une fois par an — l’app te rappelle quand elle redevient disponible',
-                      style: TextStyle(color: DzColors.mut, fontSize: 11)),
-                  value: allocationEligible,
-                  onChanged: (x) => setSt(() => allocationEligible = x),
+                const SizedBox(height: 10),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                  decoration: BoxDecoration(
+                      color: sansCarte ? DzColors.card2 : Colors.transparent,
+                      borderRadius: BorderRadius.circular(12)),
+                  child: SwitchListTile(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 10),
+                    activeThumbColor: DzColors.lime,
+                    title: const Text('Voyageur sans carte auto-entrepreneur',
+                        style: TextStyle(fontSize: 13.5)),
+                    subtitle: const Text(
+                        'Rien de déclaré sur sa valise : pas de facture, pas de douane 5 %, '
+                        'pas d’IFU, pas de taxes carte. Il touche sa commission normalement.',
+                        style: TextStyle(color: DzColors.mut, fontSize: 11, height: 1.4)),
+                    value: sansCarte,
+                    onChanged: (x) => setSt(() => sansCarte = x),
+                  ),
                 ),
+                if (!sansCarte) ...[
+                  const SizedBox(height: 6),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    activeThumbColor: DzColors.lime,
+                    title: const Text('Éligible à l’allocation touristique',
+                        style: TextStyle(fontSize: 13.5)),
+                    subtitle: const Text('750 € · une fois par an — l’app te rappelle quand elle redevient disponible',
+                        style: TextStyle(color: DzColors.mut, fontSize: 11)),
+                    value: allocationEligible,
+                    onChanged: (x) => setSt(() => allocationEligible = x),
+                  ),
+                ],
                 const SizedBox(height: 16),
                 Row(children: [
                   Expanded(child: DzDateField(
@@ -432,12 +463,14 @@ class _VoyageursScreenState extends State<VoyageursScreen> {
                       value: passExp,
                       futureYears: 11,
                       onChanged: (d) => setSt(() => passExp = d))),
-                  const SizedBox(width: 12),
-                  Expanded(child: DzDateField(
-                      label: 'Autorisation ANAE jusqu’au',
-                      value: autExp,
-                      futureYears: 3,
-                      onChanged: (d) => setSt(() => autExp = d))),
+                  if (!sansCarte) ...[
+                    const SizedBox(width: 12),
+                    Expanded(child: DzDateField(
+                        label: 'Autorisation ANAE jusqu’au',
+                        value: autExp,
+                        futureYears: 3,
+                        onChanged: (d) => setSt(() => autExp = d))),
+                  ],
                 ]),
                 const SizedBox(height: 6),
                 SwitchListTile(

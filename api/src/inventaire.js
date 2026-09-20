@@ -5,6 +5,11 @@ import { q } from './db.js';
 import { requireAuth, requireRole } from './auth.js';
 import { getReglages, coursOfficiels } from './reglages.js';
 import { SQL_PART_SEJOUR } from './sejours.js';
+import { SQL_NON_DECLARE, manqueUnitaireDA } from './compta.js';
+
+const L_COLS = `l.id, l.bon_id, l.produit, l.quantite, l.poids_total, l.manque_rmb,
+  l.manque_devise, l.manque_da, l.mode, l.prix, l.prix_declare,
+  (l.photo IS NOT NULL) AS a_photo`;
 
 const FONT = new URL('../fonts/NotoSansSC-Regular.otf', import.meta.url).pathname;
 const FONT_B = new URL('../fonts/NotoSansSC-Bold.otf', import.meta.url).pathname;
@@ -158,9 +163,22 @@ const ligneSchema = z.object({
   quantite: z.coerce.number().positive(),
   poids_total: z.coerce.number().positive(),
   manque_rmb: z.coerce.number().nonnegative().default(0),
+  manque_devise: z.enum(['RMB', 'DA']).default('RMB'),
+  manque_da: z.coerce.number().nonnegative().optional().nullable(),
   mode: z.enum(['kg', 'piece']).default('kg'),
   prix: z.coerce.number().nonnegative().default(0),
+  photo: z.string().max(4_200_000).optional().nullable(),
+  photo_mime: z.enum(['image/jpeg', 'image/png', 'image/webp']).optional().nullable(),
 });
+
+function photoDe(l) {
+  if (!l.photo) return [null, null];
+  try {
+    const b = Buffer.from(l.photo, 'base64');
+    if (!b.length || b.length > 3_000_000) return [null, null];
+    return [b, l.photo_mime || 'image/jpeg'];
+  } catch { return [null, null]; }
+}
 const bonSchema = z.object({
   chambre_id: z.coerce.number().int(),
   bon_id: z.coerce.number().int().optional(),
@@ -186,10 +204,14 @@ inventaireRouter.post('/bons', async (req, res) => {
        RETURNING *`, [d.chambre_id, d.date ?? null, d.note, req.user.sub])).rows[0];
   }
   for (const l of d.lignes) {
+    const [bin, mime] = photoDe(l);
     await q(
-      `INSERT INTO bon_lignes (bon_id, produit, quantite, poids_total, manque_rmb, mode, prix)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-      [b.id, l.produit, l.quantite, l.poids_total, l.manque_rmb, l.mode, l.prix]);
+      `INSERT INTO bon_lignes (bon_id, produit, quantite, poids_total, manque_rmb,
+         manque_devise, manque_da, mode, prix, photo, photo_mime)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [b.id, l.produit, l.quantite, l.poids_total, l.manque_rmb,
+       l.manque_devise, l.manque_devise === 'DA' ? (l.manque_da ?? 0) : null,
+       l.mode, l.prix, bin, mime]);
   }
   const kg = d.lignes.reduce((t, l) => t + l.poids_total, 0);
   const da = d.lignes.reduce((t, l) => t + (l.mode === 'kg' ? l.prix * l.poids_total : l.prix * l.quantite), 0);
@@ -207,7 +229,7 @@ inventaireRouter.get('/bons/:id', async (req, res) => {
     [id])).rows[0];
   if (!b) return res.status(404).json({ error: 'Bon introuvable.' });
   b.lignes = (await q(
-    `SELECT l.*, COALESCE(SUM(a.quantite),0) AS affecte,
+    `SELECT ${L_COLS}, COALESCE(SUM(a.quantite),0) AS affecte,
             COALESCE((SELECT SUM(r.quantite) FROM retours r WHERE r.ligne_id = l.id),0) AS rendu
      FROM bon_lignes l LEFT JOIN affectations a ON a.ligne_id = l.id
      WHERE l.bon_id = $1 GROUP BY l.id ORDER BY l.id`, [id])).rows;
@@ -236,7 +258,7 @@ const gainPiece = (l) => l.mode === 'kg'
 async function stockLignes() {
 
   const { rows } = await q(`
-    SELECT l.*, b.date AS bon_date, b.chambre_id, c.nom AS chambre_nom,
+    SELECT ${L_COLS}, b.date AS bon_date, b.chambre_id, c.nom AS chambre_nom,
            COALESCE((SELECT SUM(a.quantite) FROM affectations a WHERE a.ligne_id = l.id),0) AS affecte,
            COALESCE((SELECT SUM(a.quantite) FROM affectations a JOIN missions m ON m.id = a.mission_id
                      WHERE a.ligne_id = l.id AND m.statut <> 'cloturee'),0) AS en_cours,
@@ -283,7 +305,7 @@ async function missionsOuvertes({ excludeId = 0, dep = null, ret = null } = {}) 
     SELECT m.id, m.code, m.objectif, m.kg_soute, m.cabine, m.billet, m.dem_cout, m.frais_visa,
            m.jours, m.budget_jour, m.douane, m.autres, m.manques_da, m.depart, m.retour,
            m.valise_sup, m.valise_sup_prix, m.valise_sup_kg, m.bagage_main, m.bagage_main_kg, m.saisie_da,
-           v.nom AS voyageur, v.est_admin,
+           v.nom AS voyageur, v.est_admin, ${SQL_NON_DECLARE} AS non_declare,
            ${SQL_PART_SEJOUR} AS part_sejour_calc,
            COALESCE((SELECT SUM(kg) FROM produits_mission p WHERE p.mission_id = m.id),0) AS kg_libre,
            COALESCE((SELECT SUM(kg*prix_kg) FROM produits_mission p WHERE p.mission_id = m.id),0) AS rev_libre
@@ -315,7 +337,7 @@ async function missionsOuvertes({ excludeId = 0, dep = null, ret = null } = {}) 
       mission_id: m.id, code: m.code, voyageur: m.voyageur, depart: m.depart, retour: m.retour,
       manque_da: aCouvrir, kg_dispo: kgLibre,
       a_couvrir: aCouvrir, kg_libre: kgLibre,
-      part_sejour: partSejour, est_admin: !!m.est_admin,
+      part_sejour: partSejour, est_admin: !!m.est_admin, non_declare: !!m.non_declare,
       seuil_kg: kgLibre > 0 ? aCouvrir / kgLibre : 0,
     });
   }
@@ -388,7 +410,7 @@ inventaireRouter.get('/bons/:id/pdf', async (req, res) => {
   const contacts = (await q(
     'SELECT * FROM chambre_contacts WHERE chambre_id = $1 ORDER BY id', [b.chambre_id])).rows;
   const lignes = (await q(
-    `SELECT l.*, COALESCE((SELECT SUM(r.quantite) FROM retours r WHERE r.ligne_id = l.id),0) AS rendu
+    `SELECT ${L_COLS}, COALESCE((SELECT SUM(r.quantite) FROM retours r WHERE r.ligne_id = l.id),0) AS rendu
      FROM bon_lignes l WHERE l.bon_id = $1 ORDER BY l.id`, [id])).rows;
 
   const fr = (d) => { const s = new Date(d).toISOString().slice(0, 10); return `${s.slice(8,10)}/${s.slice(5,7)}/${s.slice(0,4)}`; };
@@ -451,7 +473,8 @@ inventaireRouter.get('/bons/:id/pdf', async (req, res) => {
     cell(0, l.produit + (rendu > 0 ? `  (rendu ${rendu})` : ''), y);
     cell(1, String(Number(l.quantite)), y, false, 'right');
     cell(2, Number(l.poids_total).toFixed(1), y, false, 'right');
-    cell(3, fm(l.manque_rmb), y, false, 'right');
+    cell(3, l.manque_devise === 'DA'
+      ? `${fm(l.manque_da ?? 0)} DA` : fm(l.manque_rmb), y, false, 'right');
     cell(4, `${fm(l.prix)}/${l.mode === 'kg' ? 'kg' : 'pc'}`, y, false, 'right');
     cell(5, fm(totalLigne), y, false, 'right');
     totKg += Number(l.poids_total); totQ += Number(l.quantite); totRendu += rendu;
@@ -469,7 +492,7 @@ inventaireRouter.get('/bons/:id/pdf', async (req, res) => {
 inventaireRouter.get('/lignes/:id', async (req, res) => {
   const id = Number(req.params.id);
   const l = (await q(
-    `SELECT l.*, b.date AS bon_date, b.note AS bon_note, c.id AS chambre_id, c.nom AS chambre_nom,
+    `SELECT ${L_COLS}, b.date AS bon_date, b.note AS bon_note, c.id AS chambre_id, c.nom AS chambre_nom,
             c.depot_wilaya, c.depot_adresse
      FROM bon_lignes l JOIN bons b ON b.id = l.bon_id JOIN chambres c ON c.id = b.chambre_id
      WHERE l.id = $1`, [id])).rows[0];
@@ -572,7 +595,8 @@ inventaireRouter.delete('/affectations/:id', async (req, res) => {
 async function rapportDepots(missionId) {
   const { rows } = await q(`
     SELECT c.id AS chambre_id, c.nom AS chambre, c.depot_adresse, c.depot_wilaya,
-           l.produit, l.mode, l.prix, l.poids_total, l.quantite AS q_ligne, l.manque_rmb,
+           l.produit, l.mode, l.prix, l.poids_total, l.quantite AS q_ligne,
+           l.manque_rmb, l.manque_devise, l.manque_da,
            a.quantite, a.manquants, a.saisis, a.emplacement
     FROM affectations a
     JOIN bon_lignes l ON l.id = a.ligne_id
@@ -600,7 +624,9 @@ async function rapportDepots(missionId) {
     };
     const pu = Number(r.poids_total) / Number(r.q_ligne);
     d.lignes.push({ produit: r.produit, quantite: livre, kg: livre * pu, da: livre * gp,
-      manquants: Number(r.manquants), saisis: Number(r.saisis || 0), manque_rmb: Number(r.manque_rmb),
+      manquants: Number(r.manquants), saisis: Number(r.saisis || 0),
+      manque_rmb: Number(r.manque_rmb), manque_devise: r.manque_devise,
+      manque_da: r.manque_da == null ? null : Number(r.manque_da),
       emplacement: r.emplacement || 'soute', mode: r.mode, prix: Number(r.prix) });
     d.total_da += livre * gp;
     d.kg += livre * pu;
@@ -728,4 +754,45 @@ inventaireRouter.get('/depots/:missionId/pdf/:chambreId', async (req, res) => {
       .text(`Déjà versé : ${fm(dep.encaisse)} DA — reste : ${fm(dep.total_da - dep.encaisse)} DA`, L, y + 10);
   }
   doc.end();
+});
+
+inventaireRouter.post('/lignes/:id/photo', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Identifiant invalide.' });
+  const p = z.object({
+    data: z.string().min(10).max(4_200_000),
+    mime: z.enum(['image/jpeg', 'image/png', 'image/webp']),
+  }).safeParse(req.body);
+  if (!p.success) {
+    return res.status(400).json({ error: 'Photo invalide (JPEG/PNG/WebP, 3 Mo max).' });
+  }
+  let bytes;
+  try { bytes = Buffer.from(p.data.data, 'base64'); }
+  catch { return res.status(400).json({ error: 'Photo illisible.' }); }
+  if (!bytes.length || bytes.length > 3_000_000) {
+    return res.status(400).json({ error: 'Photo trop lourde (3 Mo max).' });
+  }
+  const r = await q(
+    'UPDATE bon_lignes SET photo = $1, photo_mime = $2 WHERE id = $3 RETURNING produit',
+    [bytes, p.data.mime, id]);
+  if (!r.rows[0]) return res.status(404).json({ error: 'Produit introuvable.' });
+  await audit(req.user.sub, 'photo_produit', 'bon_ligne', id,
+    { produit: r.rows[0].produit, ko: Math.round(bytes.length / 1024) });
+  res.status(201).json({ ok: true });
+});
+
+inventaireRouter.get('/lignes/:id/photo', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Identifiant invalide.' });
+  const l = (await q('SELECT photo, photo_mime FROM bon_lignes WHERE id = $1', [id])).rows[0];
+  if (!l?.photo) return res.status(404).json({ error: 'Pas de photo.' });
+  res.set('Content-Type', l.photo_mime || 'image/jpeg');
+  res.send(l.photo);
+});
+
+inventaireRouter.delete('/lignes/:id/photo', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Identifiant invalide.' });
+  await q('UPDATE bon_lignes SET photo = NULL, photo_mime = NULL WHERE id = $1', [id]);
+  res.json({ ok: true });
 });

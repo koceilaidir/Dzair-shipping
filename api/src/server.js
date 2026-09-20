@@ -61,6 +61,7 @@ const voyageurSchema = z.object({
   autorisation_expire: z.string().max(10).nullable().optional(),
   devise_compte: z.enum(['USD', 'EUR']).default('USD'),
   allocation_eligible: z.boolean().default(true),
+  sans_carte: z.boolean().default(false),
   solde_devises: z.coerce.number().nonnegative().optional(),
 
   nom_passeport: z.string().max(160).nullable().optional(),
@@ -158,12 +159,14 @@ app.post('/api/voyageurs', requireAuth, requireRole('admin'), async (req, res) =
   const { rows } = await q(
     `INSERT INTO voyageurs (nom, tel, comm_mode, comm_val, bagages, depuis, dette_active,
        dette_montant, passeport_expire, autorisation_expire, devise_compte, allocation_eligible,
-       statut_dispo, nom_passeport, adresse, wilaya, user_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *`,
+       statut_dispo, nom_passeport, adresse, wilaya, sans_carte, user_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING *`,
     [v.nom, v.tel ?? null, v.comm_mode, v.comm_val, v.bagages, v.depuis ?? null,
-     v.dette_active, v.dette_montant, v.passeport_expire ?? null, v.autorisation_expire ?? null,
-     v.devise_compte, v.allocation_eligible, v.statut_dispo,
-     v.nom_passeport ?? null, v.adresse ?? null, v.wilaya ?? null, compte?.user_id ?? null],
+     v.dette_active, v.dette_montant,
+     v.passeport_expire ?? null, v.sans_carte ? null : (v.autorisation_expire ?? null),
+     v.devise_compte, v.sans_carte ? false : v.allocation_eligible, v.statut_dispo,
+     v.nom_passeport ?? null, v.adresse ?? null, v.wilaya ?? null, v.sans_carte,
+     compte?.user_id ?? null],
   );
   await q(
     `INSERT INTO audit_log (user_id, action, entite, entite_id, details)
@@ -222,13 +225,14 @@ app.put('/api/voyageurs/:id', requireAuth, requireRole('admin'), async (req, res
     `UPDATE voyageurs SET nom=$1, tel=$2, comm_mode=$3, comm_val=$4, bagages=$5,
        depuis=$6, dette_active=$7, dette_montant=$8, passeport_expire=$9, autorisation_expire=$10,
        devise_compte=$11, allocation_eligible=$12, statut_dispo=$13,
-       nom_passeport=$14, adresse=$15, wilaya=$16, solde_devises=$17
-     WHERE id=$18 RETURNING *`,
+       nom_passeport=$14, adresse=$15, wilaya=$16, solde_devises=$17, sans_carte=$18
+     WHERE id=$19 RETURNING *`,
     [v.nom, v.tel ?? null, v.comm_mode, v.comm_val, v.bagages, v.depuis ?? null,
-     v.dette_active, v.dette_montant, v.passeport_expire ?? null, v.autorisation_expire ?? null,
-     v.devise_compte, v.allocation_eligible, v.statut_dispo,
+     v.dette_active, v.dette_montant,
+     v.passeport_expire ?? null, v.sans_carte ? null : (v.autorisation_expire ?? null),
+     v.devise_compte, v.sans_carte ? false : v.allocation_eligible, v.statut_dispo,
      v.nom_passeport ?? null, v.adresse ?? null, v.wilaya ?? null,
-     v.solde_devises ?? cur.solde_devises, id],
+     v.sans_carte ? 0 : (v.solde_devises ?? cur.solde_devises), !!v.sans_carte, id],
   );
   const { email: _e, username: _u, ...auditables } = parsed.data;
   await q(

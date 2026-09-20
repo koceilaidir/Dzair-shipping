@@ -6,6 +6,7 @@ import '../theme.dart';
 import '../widgets/date_field.dart';
 import '../widgets/inventaire_picker.dart';
 import '../widgets/factures_dialog.dart';
+import '../widgets/checks.dart';
 import '../services/download.dart';
 import '../services/upload.dart';
 import 'rapport_depots_screen.dart';
@@ -36,24 +37,8 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
   final _prix = TextEditingController();
   final _liquide = TextEditingController();
 
-  static const _itemsDepart = [
-    ('passeport', 'Passeport valide en poche', true),
-    ('autorisations', 'Autorisations ANAE imprimées', false),
-    ('carte_ae', 'Carte auto-entrepreneur', false),
-    ('argent_depose', 'Argent déposé dans les cartes', false),
-    ('enveloppe_douane', 'Enveloppe douane préparée (DA en liquide)', false),
-    ('sim', 'Puce SIM emportée', false),
-    ('vpn', 'VPN installé', false),
-    ('wechat_alipay', 'WeChat + Alipay authentifiés', false),
-    ('nourriture', 'Nourriture (5 jours)', false),
-  ];
-  static const _itemsRetour = [
-    ('factures_dl', 'Factures téléchargées (PDF)', false),
-    ('factures_cachet', 'Factures imprimées et cachetées', false),
-    ('factures_scan', 'Factures scannées', false),
-    ('factures_anae', 'Factures chargées sur le site ANAE', false),
-    ('qr_colles', 'Codes QR imprimés et collés sur les valises', false),
-  ];
+  List<DzCheck> get _itemsDepart => checksPour(kChecksDepart, _nonDeclare);
+  List<DzCheck> get _itemsRetour => checksPour(kChecksRetour, _nonDeclare);
 
   @override
   void initState() {
@@ -125,7 +110,7 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
     return t > 0 ? t : 135;
   }
 
-  double get _taxesCarte => _m!['est_admin'] == true
+  double get _taxesCarte => _m!['non_declare'] == true
       ? 0
       : (_facturee ? _n(_m!['factures_total']) : _marchandiseDevise)
           * _pctCarte * _tauxParallele;
@@ -147,7 +132,7 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
   double get _kIfu =>
       _m!['statut'] == 'cloturee' && !_taxesReelles ? (_marge30 ? 1.3 : 1.0) : 1.3;
 
-  double get _douane => _m!['est_admin'] == true
+  double get _douane => _m!['non_declare'] == true
       ? 0
       : _taxesReelles
       ? _n(_m!['taxes_reelles'])
@@ -162,6 +147,7 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
       ? _n(_m!['val_declaree'])
       : _baseDouane * _tauxOfficiel;
   bool get _estAdmin => _m!['est_admin'] == true;
+  bool get _nonDeclare => _m!['non_declare'] == true;
   double get _partSejour => _n(_m!['part_sejour_da']);
   double get _frais => _n(_m!['billet']) + _n(_m!['dem_cout']) + _n(_m!['frais_visa']) +
       _poche + _douane + _taxesCarte + _n(_m!['autres']) + _n(_m!['manques_da']) +
@@ -977,7 +963,21 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
       ),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
         _ligne('Billet A/R', '${_f(_n(m['billet']))} DA'),
-        _ligne('Démarches — ${_demLabel(m['dem_type'])}', '${_f(_n(m['dem_cout']))} DA'),
+        InkWell(
+          onTap: closed ? null : _editDemarches,
+          borderRadius: BorderRadius.circular(6),
+          child: Row(children: [
+            Expanded(
+              child: _ligne('Démarches — ${_demLabel(m['dem_type'])}',
+                  '${_f(_n(m['dem_cout']))} DA'),
+            ),
+            if (!closed)
+              const Padding(
+                padding: EdgeInsets.only(left: 6),
+                child: Icon(Icons.edit_outlined, size: 13, color: DzColors.mut2),
+              ),
+          ]),
+        ),
         _ligne('Frais de dépôt visa', '${_f(_n(m['frais_visa']))} DA'),
 
         InkWell(
@@ -1002,9 +1002,11 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
             ]),
           ),
         ),
-        if (_estAdmin)
+        if (_nonDeclare)
           _ligne('Douane · IFU · taxes carte',
-              'rien — mission admin, hors carte auto-entrepreneur',
+              _estAdmin
+                  ? 'rien — mission admin, hors carte auto-entrepreneur'
+                  : 'rien — voyageur sans carte auto-entrepreneur',
               couleur: DzColors.mut)
         else if (_taxesReelles)
           _ligne('Taxes douane + IFU (réelles — payées à l’arrivée)', '${_f(_douane)} DA')
@@ -1020,7 +1022,7 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
                   : 'Taxe IFU 0,5 % — marge 30 % comptée (au cas où)',
               '${_f(_taxeIfu)} DA'),
         ],
-        if (!_estAdmin)
+        if (!_nonDeclare)
           _ligne(
               _facturee
                   ? 'Taxes carte (réelles, factures)'
@@ -1953,19 +1955,12 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
         ]),
       );
 
-  Map<String, bool> _autoDepart() => {
-        'billet_ok': _n(_m!['billet']) > 0 && _m!['depart'] != null,
-        'argent_depose': _marchandiseDA > 0,
-      };
+  Map<String, bool> _autoDepart() => autoDepartDe(_m!,
+      nonDeclare: _nonDeclare, marchandiseDA: _marchandiseDA);
 
-  (int, int) _avancement(String champ, List items, Map<String, bool> auto) {
-    final etat = Map<String, dynamic>.from(_m![champ] as Map? ?? {});
-    bool val(String cle) => etat[cle] == true || auto[cle] == true;
-    final total = items.length + (champ == 'check_depart' ? 1 : 0);
-    var faits = items.where((i) => val(i.$1 as String)).length;
-    if (champ == 'check_depart' && (auto['billet_ok'] ?? false)) faits += 1;
-    return (faits, total);
-  }
+  (int, int) _avancement(String champ, List items, Map<String, bool> auto) =>
+      avancementCheck(_m!, champ,
+          nonDeclare: _nonDeclare, marchandiseDA: _marchandiseDA);
 
   bool get _departComplet {
     final (f, t) = _avancement('check_depart', _itemsDepart, _autoDepart());
@@ -2056,19 +2051,31 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
                 '🔒 Déclare d’abord la valise complète (section Valise) pour ouvrir ce check.'),
           ),
         if (champ == 'check_depart') ...[
-          const Padding(
-            padding: EdgeInsets.only(top: 4, bottom: 10),
+          Padding(
+            padding: const EdgeInsets.only(top: 4, bottom: 10),
             child: Text(
-              'Vérifie que TOUT est coché avant le départ — une mission bien préparée '
-              'se passe sans mauvaise surprise. Et rappelle-toi : factures, déclarations '
-              'et règles respectées, sinon les autorisations ne seront pas renouvelées '
-              'l’année prochaine.',
-              style: TextStyle(color: DzColors.mut, fontSize: 11, height: 1.5),
+              _nonDeclare
+                  ? 'Vérifie que TOUT est coché avant le départ. Les points liés à la '
+                      'carte auto-entrepreneur (ANAE, carte, dépôt sur la carte, '
+                      'enveloppe douane) ne s’appliquent pas à cette valise.'
+                  : 'Vérifie que TOUT est coché avant le départ — une mission bien préparée '
+                      'se passe sans mauvaise surprise. Et rappelle-toi : factures, '
+                      'déclarations et règles respectées, sinon les autorisations ne seront '
+                      'pas renouvelées l’année prochaine.',
+              style: const TextStyle(color: DzColors.mut, fontSize: 11, height: 1.5),
             ),
           ),
         ],
         if (champ == 'check_depart')
           _checkTile('Billet réservé (auto)', val('billet_ok'), null, locked: true),
+        if (items.isEmpty && champ == 'check_retour')
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 6),
+            child: Text(
+                'Rien à faire au retour : aucune facture, aucune déclaration ANAE — '
+                'cette valise ne passe pas par la carte auto-entrepreneur.',
+                style: TextStyle(color: DzColors.mut, fontSize: 11.5, height: 1.5)),
+          ),
         for (final it in items)
           _checkTile(it.$2 as String, val(it.$1 as String),
               (closed || verrou) ? null : (v) => _toggleCheck(champ, it.$1 as String, v)),
@@ -2123,6 +2130,20 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
         child: Text(txt, style: TextStyle(color: c, fontSize: 12, fontWeight: FontWeight.w600)),
       );
 
+  bool get _commVersee => _m!['commission_versee'] == true;
+
+  Future<void> _basculerCommission() async {
+    try {
+      await Api.post('/missions/${widget.id}/commission-versee',
+          {'versee': !_commVersee});
+      _load();
+    } on ApiException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    }
+  }
+
   Widget _clotureRecap() {
     final m = _m!;
     final com = _n(m['commission']);
@@ -2156,6 +2177,37 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
         const Divider(color: DzColors.line, height: 16),
         _ligne(solde > 0 ? 'Reste à encaisser' : 'Soldé', '${_f(solde)} DA',
             gras: true, couleur: solde > 0 ? DzColors.amber : DzColors.lime),
+        if (com + primes > 0) ...[
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+            decoration: BoxDecoration(
+                color: DzColors.card2, borderRadius: BorderRadius.circular(12)),
+            child: Row(children: [
+              Icon(_commVersee ? Icons.check_circle : Icons.schedule_rounded,
+                  size: 18, color: _commVersee ? DzColors.lime : DzColors.amber),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(
+                      _commVersee
+                          ? 'Commission versée au voyageur'
+                          : 'Commission à verser au voyageur',
+                      style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
+                  Text('${_f(com + primes)} DA'
+                      '${primes > 0 ? ' (dont ${_f(primes)} DA de primes)' : ''}',
+                      style: const TextStyle(color: DzColors.mut, fontSize: 10.5)),
+                ]),
+              ),
+              const SizedBox(width: 10),
+              OutlinedButton(
+                onPressed: _basculerCommission,
+                child: Text(_commVersee ? 'Annuler' : 'Marquer versée',
+                    style: const TextStyle(fontSize: 12)),
+              ),
+            ]),
+          ),
+        ],
         const SizedBox(height: 10),
         Row(children: [
           OutlinedButton.icon(
@@ -2260,6 +2312,114 @@ class _MissionDetailScreenState extends State<MissionDetailScreen> {
                               labelText: 'Atterrissage (HH:mm)', hintText: '06:30'))),
                     ]),
                     const SizedBox(height: 18),
+                    FilledButton(
+                      onPressed: saving ? null : save,
+                      child: saving
+                          ? const SizedBox(height: 18, width: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2))
+                          : const Text('Enregistrer'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      }),
+    );
+  }
+
+  Future<void> _editDemarches() async {
+    var choix = '${_m!['dem_type'] ?? 'multiple'}';
+    bool saving = false;
+    const options = [
+      ('premiere', 'Première demande', 'prix_premiere'),
+      ('renouvellement', 'Renouvellement', 'prix_renouvellement'),
+      ('visa_double', 'Visa double entrée', 'prix_visa_double'),
+      ('multiple', 'Visa multiple — rien à payer', ''),
+    ];
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(builder: (ctx, setSt) {
+        Future<void> save() async {
+          if (saving) return;
+          setSt(() => saving = true);
+          final cle = options.firstWhere((o) => o.$1 == choix).$3;
+          try {
+            await Api.put('/missions/${widget.id}', {
+              'dem_type': choix,
+              'dem_cout': cle.isEmpty ? 0 : _rg(cle),
+            });
+            if (ctx.mounted) Navigator.pop(ctx);
+            _load();
+          } on ApiException catch (e) {
+            setSt(() => saving = false);
+            if (ctx.mounted) {
+              ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text(e.message)));
+            }
+          }
+        }
+
+        return Dialog(
+          backgroundColor: DzColors.card,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+                maxWidth: 420, maxHeight: MediaQuery.of(ctx).size.height * .88),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(22, 22, 22, 20),
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('Démarches',
+                        style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 4),
+                    const Text(
+                        'Le coût vient des réglages. Tu peux l’ajuster ensuite dans '
+                        '« Modifier les frais ».',
+                        style: TextStyle(color: DzColors.mut, fontSize: 11.5, height: 1.4)),
+                    const SizedBox(height: 16),
+                    for (final o in options)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(12),
+                          onTap: () => setSt(() => choix = o.$1),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 13),
+                            decoration: BoxDecoration(
+                              color: DzColors.card2,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                  color: choix == o.$1
+                                      ? DzColors.lime : Colors.transparent,
+                                  width: 1.4),
+                            ),
+                            child: Row(children: [
+                              Icon(
+                                  choix == o.$1
+                                      ? Icons.radio_button_checked
+                                      : Icons.radio_button_unchecked,
+                                  size: 17,
+                                  color: choix == o.$1 ? DzColors.lime : DzColors.mut),
+                              const SizedBox(width: 11),
+                              Expanded(
+                                child: Text(o.$2,
+                                    style: const TextStyle(fontSize: 13.5)),
+                              ),
+                              Text(
+                                  o.$3.isEmpty ? '0 DA' : '${_f(_rg(o.$3))} DA',
+                                  style: const TextStyle(color: DzColors.mut,
+                                      fontSize: 12, fontWeight: FontWeight.w600)),
+                            ]),
+                          ),
+                        ),
+                      ),
+                    const SizedBox(height: 10),
                     FilledButton(
                       onPressed: saving ? null : save,
                       child: saving

@@ -42,10 +42,20 @@ ThemeData dzairTheme() {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
     ),
     dividerTheme: const DividerThemeData(color: DzColors.line, thickness: 1, space: 1),
+    dialogTheme: base.dialogTheme.copyWith(
+      backgroundColor: DzColors.card,
+      elevation: 0,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 24),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+    ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: DzColors.card2,
-      labelStyle: const TextStyle(color: DzColors.mut),
+      isDense: false,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 15),
+      labelStyle: const TextStyle(color: DzColors.mut, fontSize: 13.5),
+      floatingLabelStyle: const TextStyle(color: DzColors.mut, fontSize: 13),
+      hintStyle: const TextStyle(color: DzColors.mut2, fontSize: 13.5),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
         borderSide: BorderSide.none,

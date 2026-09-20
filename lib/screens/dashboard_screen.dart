@@ -3,6 +3,7 @@ import '../services/api.dart';
 import '../theme.dart';
 import '../widgets/avatar_user.dart';
 import '../widgets/charts.dart';
+import '../widgets/checks.dart';
 import '../widgets/depense_dialog.dart';
 import 'mission_detail_screen.dart';
 
@@ -23,7 +24,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   List? _voyageurs;
   List? _contacts;
   Map? _sejour;
-  List? _admins;
   Map? _reglages;
   bool _loaded = false;
 
@@ -57,7 +57,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       tente<List>(Api.get('/voyageurs')),
       tente<List>(Api.get('/messages/contacts')),
       tente<Map>(Api.get('/sejours/en-cours')),
-      tente<List>(Api.get('/admins')),
       tente<Map>(Api.get('/reglages')),
     ]);
     if (!mounted) return;
@@ -70,13 +69,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _voyageurs = res[5] as List?;
       _contacts = res[6] as List?;
       _sejour = res[7] as Map?;
-      _admins = res[8] as List?;
-      _reglages = res[9] as Map?;
+      _reglages = res[8] as Map?;
       _loaded = true;
     });
   }
 
   double _n(dynamic v) => v == null ? 0 : (num.tryParse('$v') ?? 0).toDouble();
+  int _i(dynamic v, [int defaut = 0]) =>
+      v is int ? v : (num.tryParse('$v')?.toInt() ?? defaut);
   String _f(num n) => n.round().toString()
       .replaceAllMapped(RegExp(r'(\d)(?=(\d{3})+$)'), (m) => '${m[1]} ');
 
@@ -194,6 +194,36 @@ class _DashboardScreenState extends State<DashboardScreen> {
           DzColors.lime, widget.onOuvrirMessages));
     }
 
+    for (final m in _enCours) {
+      final nonDeclare = m['non_declare'] == true;
+      final qui = '${m['voyageur_nom']}';
+      final marchandise = _n(m['marchandise_da']);
+
+      final jd = _joursAvant(m['depart']);
+      if (jd != null && jd >= 0 && jd <= 3) {
+        final (f, t) = avancementCheck(m, 'check_depart',
+            nonDeclare: nonDeclare, marchandiseDA: marchandise);
+        if (f < t) {
+          out.add((Icons.checklist_rtl_rounded,
+              'Check départ $f/$t pour $qui — '
+              '${jd == 0 ? 'départ aujourd’hui' : jd == 1 ? 'départ demain' : 'départ dans $jd j'}',
+              jd <= 1 ? DzColors.red : DzColors.amber, null));
+        }
+      }
+
+      final jr = _joursAvant(m['retour']);
+      if (jr != null && jr <= 2) {
+        final (f, t) = avancementCheck(m, 'check_retour',
+            nonDeclare: nonDeclare, marchandiseDA: marchandise);
+        if (t > 0 && f < t) {
+          out.add((Icons.assignment_late_outlined,
+              'Check retour $f/$t pour $qui — '
+              '${jr < 0 ? 'rentré depuis ${-jr} j' : jr == 0 ? 'retour aujourd’hui' : 'retour dans $jr j'}',
+              jr <= 0 ? DzColors.red : DzColors.amber, null));
+        }
+      }
+    }
+
     final vol = _volEnCours;
     if (vol != null) {
       out.add((Icons.flight_land,
@@ -242,7 +272,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           '${_f(_n(pire['reste']))} DA à encaisser — ${pire['code']} (${pire['voyageur']})',
           DzColors.amber, null));
     }
-    return out.take(5).toList();
+    return out.take(7).toList();
   }
 
   String _phrase(Map a) {
@@ -307,8 +337,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 _pastilleTaux(),
                 const SizedBox(width: 10),
                 _selecteurPeriode(),
-                const SizedBox(width: 10),
-                _boutonDepense(),
               ],
             ]),
             if (!wide) ...[
@@ -317,8 +345,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 _pastilleTaux(),
                 const SizedBox(width: 10),
                 Expanded(child: _selecteurPeriode()),
-                const SizedBox(width: 10),
-                _boutonDepense(),
               ]),
             ],
             const SizedBox(height: 16),
@@ -477,34 +503,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         );
       }),
     );
-  }
-
-  Widget _boutonDepense() => GestureDetector(
-        onTap: _ouvrirDepense,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 9),
-          decoration: BoxDecoration(
-              color: DzColors.card2, borderRadius: BorderRadius.circular(99)),
-          child: const Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.add_rounded, size: 15, color: DzColors.lime),
-            SizedBox(width: 6),
-            Text('Dépense',
-                style: TextStyle(color: DzColors.txt2, fontSize: 12,
-                    fontWeight: FontWeight.w700)),
-          ]),
-        ),
-      );
-
-  Future<void> _ouvrirDepense() async {
-    final s = _sejour;
-    if (s == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Aucun séjour en cours — crée d’abord une mission.')));
-      return;
-    }
-    final ok = await montrerDepenseDialog(context,
-        sejour: s, admins: _admins ?? [], reglages: _reglages);
-    if (ok) await _load();
   }
 
   Future<void> _ouvrirHistoriqueDepenses() async {
@@ -751,12 +749,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           textAlign: TextAlign.center,
                           style: TextStyle(color: DzColors.mut, fontSize: 12)),
                     ),
-                    GestureDetector(
-                      onTap: _ouvrirDepense,
-                      child: const Text('Ajouter la première dépense',
-                          style: TextStyle(color: DzColors.lime, fontSize: 12,
-                              fontWeight: FontWeight.w700)),
-                    ),
+                    const Text('Elles s’ajoutent depuis la page Missions.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: DzColors.mut2, fontSize: 11)),
                   ])
                 : Column(children: [
                     Row(children: [
@@ -950,7 +945,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             : pret ? ('Prêt', DzColors.lime) : ('En cours', DzColors.amber);
     return InkWell(
       onTap: () => Navigator.push(context,
-              MaterialPageRoute(builder: (_) => MissionDetailScreen(id: m['id'] as int)))
+              MaterialPageRoute(builder: (_) => MissionDetailScreen(id: _i(m['id']))))
           .then((_) => _load()),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
@@ -1072,7 +1067,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               decoration: i == 0 ? null : const BoxDecoration(
                   border: Border(top: BorderSide(color: DzColors.line))),
               child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                AvatarUser(userId: fils[i]['id'] as int?,
+                AvatarUser(userId: fils[i]['id'] == null ? null : _i(fils[i]['id']),
                     nom: '${fils[i]['nom']}', taille: 30),
                 const SizedBox(width: 10),
                 Expanded(

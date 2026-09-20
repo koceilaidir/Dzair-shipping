@@ -380,3 +380,11 @@ CREATE INDEX IF NOT EXISTS idx_missions_sejour  ON missions(sejour_id);
 CREATE INDEX IF NOT EXISTS idx_depenses_sejour  ON depenses_sejour(sejour_id);
 
 ALTER TABLE missions ADD COLUMN IF NOT EXISTS solde_avant NUMERIC(14,2);
+
+ALTER TABLE voyageurs ADD COLUMN IF NOT EXISTS sans_carte BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE bon_lignes ADD COLUMN IF NOT EXISTS manque_devise TEXT NOT NULL DEFAULT 'RMB'
+  CHECK (manque_devise IN ('RMB','DA'));
+ALTER TABLE bon_lignes ADD COLUMN IF NOT EXISTS manque_da  NUMERIC(12,2);
+ALTER TABLE bon_lignes ADD COLUMN IF NOT EXISTS photo      BYTEA;
+ALTER TABLE bon_lignes ADD COLUMN IF NOT EXISTS photo_mime TEXT;

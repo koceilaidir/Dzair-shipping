@@ -332,7 +332,7 @@ class _ChambreDetailScreenState extends State<ChambreDetailScreen> {
         backgroundColor: DzColors.card,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 560),
+          constraints: BoxConstraints(maxWidth: 560, maxHeight: MediaQuery.of(ctx).size.height * .88),
           child: Padding(padding: const EdgeInsets.fromLTRB(22, 22, 22, 16),
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
               Text('Bon du ${dateFr(b['date'])} · ${b['chambre_nom']}',

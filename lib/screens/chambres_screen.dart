@@ -179,7 +179,7 @@ Future<Map?> showChambreForm(BuildContext context, {Map? chambre, VoidCallback? 
         backgroundColor: DzColors.card,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 500),
+          constraints: BoxConstraints(maxWidth: 500, maxHeight: MediaQuery.of(ctx).size.height * .88),
           child: Padding(padding: const EdgeInsets.fromLTRB(22, 22, 22, 20),
             child: SingleChildScrollView(child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min,

@@ -1,5 +1,8 @@
+import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import '../services/api.dart';
+import '../services/upload.dart';
 import '../theme.dart';
 import '../widgets/date_field.dart';
 import 'bon_screen.dart';
@@ -347,7 +350,7 @@ class _InventaireScreenState extends State<InventaireScreen> {
           backgroundColor: DzColors.card,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 400),
+            constraints: BoxConstraints(maxWidth: 400, maxHeight: MediaQuery.of(ctx).size.height * .88),
             child: Padding(padding: const EdgeInsets.fromLTRB(22, 22, 22, 18),
               child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
                 Text('Rendre à ${l['chambre_nom']}', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
@@ -493,17 +496,84 @@ class _InventaireScreenState extends State<InventaireScreen> {
             Text(v, style: TextStyle(color: c, fontSize: 12.5, fontWeight: FontWeight.w600)),
           ]),
         );
+    Uint8List? photo;
+    if (l['a_photo'] == true) {
+      try {
+        photo = Uint8List.fromList(
+            await Api.getBytes('/inventaire/lignes/${l['id']}/photo'));
+      } catch (_) {}
+    }
+    if (!mounted) return;
+
     await showDialog(
       context: context,
-      builder: (ctx) => Dialog(
+      builder: (ctx) => StatefulBuilder(builder: (ctx, setSt) {
+      Future<void> changerPhoto() async {
+        final img = await pickImage();
+        if (img == null) return;
+        final (bytes, mime) =
+            await compresserImage(img.$1, img.$2, maxCote: 1200, qualite: 0.72);
+        try {
+          await Api.post('/inventaire/lignes/${l['id']}/photo', {
+            'data': base64Encode(bytes), 'mime': mime,
+          });
+          setSt(() => photo = Uint8List.fromList(bytes));
+          _load();
+        } on ApiException catch (e) {
+          if (ctx.mounted) {
+            ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text(e.message)));
+          }
+        }
+      }
+
+      return Dialog(
         backgroundColor: DzColors.card,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 540),
+          constraints: BoxConstraints(
+              maxWidth: 540,
+              maxHeight: MediaQuery.of(ctx).size.height * .88),
           child: Padding(padding: const EdgeInsets.fromLTRB(22, 22, 22, 16),
             child: SingleChildScrollView(child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min,
               children: [
+                GestureDetector(
+                  onTap: changerPhoto,
+                  child: Container(
+                    height: photo == null ? 76 : 190,
+                    alignment: Alignment.center,
+                    clipBehavior: Clip.antiAlias,
+                    decoration: BoxDecoration(
+                        color: DzColors.card2,
+                        borderRadius: BorderRadius.circular(14)),
+                    child: photo != null
+                        ? Stack(fit: StackFit.expand, children: [
+                            Image.memory(photo!, fit: BoxFit.cover),
+                            Positioned(
+                              right: 8, bottom: 8,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 5),
+                                decoration: BoxDecoration(
+                                    color: DzColors.card,
+                                    borderRadius: BorderRadius.circular(99)),
+                                child: const Text('Changer la photo',
+                                    style: TextStyle(color: DzColors.lime,
+                                        fontSize: 10.5, fontWeight: FontWeight.w700)),
+                              ),
+                            ),
+                          ])
+                        : const Row(mainAxisSize: MainAxisSize.min, children: [
+                            Icon(Icons.add_a_photo_outlined,
+                                size: 18, color: DzColors.mut),
+                            SizedBox(width: 9),
+                            Text('Ajouter une photo du produit',
+                                style: TextStyle(color: DzColors.mut, fontSize: 12.5)),
+                          ]),
+                  ),
+                ),
+                const SizedBox(height: 14),
                 Text('${l['produit']}', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
                 Text('Traçabilité du lot', style: const TextStyle(color: DzColors.mut, fontSize: 11.5)),
                 const SizedBox(height: 14),
@@ -517,7 +587,11 @@ class _InventaireScreenState extends State<InventaireScreen> {
                     '${_n(l['poids_unit']).toStringAsFixed(2)} kg/pc'),
                 ligne('Payé par le dépôt', l['mode'] == 'kg' ? '${_f(_n(l['prix']))} DA/kg' : '${_f(_n(l['prix']))} DA/pc'),
                 ligne('Gain par pièce', '${_f(_n(l['gain_piece']))} DA', c: DzColors.lime),
-                ligne('Prix du manque', '${_f(_n(l['manque_rmb']))} ¥/pc', c: DzColors.amber),
+                ligne('Prix du manque',
+                    l['manque_devise'] == 'DA'
+                        ? '${_f(_n(l['manque_da']))} DA/pc'
+                        : '${_f(_n(l['manque_rmb']))} ¥/pc',
+                    c: DzColors.amber),
                 const SizedBox(height: 14),
                 const Text('OÙ SONT LES PIÈCES', style: TextStyle(color: DzColors.mut, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1.2)),
                 const SizedBox(height: 4),
@@ -561,7 +635,8 @@ class _InventaireScreenState extends State<InventaireScreen> {
               ]),
             )),
         ),
-      ),
+      );
+      }),
     );
   }
 

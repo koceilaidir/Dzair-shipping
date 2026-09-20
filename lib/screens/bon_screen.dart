@@ -1,5 +1,8 @@
+import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import '../services/api.dart';
+import '../services/upload.dart';
 import '../theme.dart';
 import '../widgets/date_field.dart';
 import 'chambres_screen.dart' show showChambreForm;
@@ -110,9 +113,14 @@ class _BonScreenState extends State<BonScreen> {
     final sugg = f.isEmpty ? _chambres!.take(8).toList()
         : _chambres!.where((c) => '${c['nom']} ${c['depot_wilaya'] ?? ''}'.toLowerCase().contains(f)).take(8).toList();
     final valides = _valides;
-    final kgTot = valides.fold(0.0, (s, l) => s + l.poids);
+    final kgTot = valides.fold(0.0, (s, l) => s + l.poidsTotal);
     final gainTot = valides.fold(0.0, (s, l) => s + l.gainTotal);
-    final manqueTot = valides.fold(0.0, (s, l) => s + l.manqueTotal);
+    final manqueRmb = valides
+        .where((l) => l.manqueDevise == 'RMB')
+        .fold(0.0, (s, l) => s + l.manqueTotal);
+    final manqueDa = valides
+        .where((l) => l.manqueDevise == 'DA')
+        .fold(0.0, (s, l) => s + l.manqueTotal);
 
     return Column(children: [
       Expanded(
@@ -229,7 +237,9 @@ class _BonScreenState extends State<BonScreen> {
         decoration: const BoxDecoration(color: DzColors.panel, border: Border(top: BorderSide(color: DzColors.line))),
         child: Row(children: [
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('${valides.length} produit(s) · ${kgTot.toStringAsFixed(1)} kg · manque ${_f(manqueTot)} ¥',
+            Text('${valides.length} produit(s) · ${kgTot.toStringAsFixed(1)} kg'
+                '${manqueRmb > 0 ? ' · manque ${_f(manqueRmb)} ¥' : ''}'
+                '${manqueDa > 0 ? ' · manque ${_f(manqueDa)} DA' : ''}',
                 style: const TextStyle(color: DzColors.mut, fontSize: 12)),
             Text.rich(TextSpan(children: [
               TextSpan(text: '${_f(gainTot)} DA', style: const TextStyle(color: DzColors.lime, fontSize: 16, fontWeight: FontWeight.w800)),
@@ -262,65 +272,170 @@ class _BonScreenState extends State<BonScreen> {
         ]),
       );
 
-  Widget _ligneForm(int i, _LigneCtrl l, VoidCallback onChange, VoidCallback? onRemove) => Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
-        decoration: BoxDecoration(color: DzColors.card2, borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: l.valide ? DzColors.lime.withValues(alpha: .3) : DzColors.line)),
-        child: Column(children: [
-          Row(children: [
-            Container(width: 22, height: 22, alignment: Alignment.center,
-                decoration: BoxDecoration(color: DzColors.card, borderRadius: BorderRadius.circular(6)),
-                child: Text('${i + 1}', style: const TextStyle(color: DzColors.mut, fontSize: 10.5, fontWeight: FontWeight.w700))),
-            const SizedBox(width: 8),
-            Expanded(flex: 4, child: TextField(textCapitalization: TextCapitalization.sentences, controller: l.produit, onChanged: (_) => onChange(),
-                decoration: const InputDecoration(labelText: 'Produit', isDense: true))),
-            const SizedBox(width: 8),
-            Expanded(flex: 2, child: TextField(controller: l.qte, keyboardType: TextInputType.number, onChanged: (_) => onChange(),
-                decoration: const InputDecoration(labelText: 'Qté (pcs)', isDense: true))),
-            const SizedBox(width: 8),
-            Expanded(flex: 2, child: TextField(controller: l.kg, keyboardType: TextInputType.number, onChanged: (_) => onChange(),
-                decoration: const InputDecoration(labelText: 'Poids total kg', isDense: true))),
-            const SizedBox(width: 8),
-            Expanded(flex: 2, child: TextField(controller: l.manque, keyboardType: TextInputType.number, onChanged: (_) => onChange(),
-                decoration: const InputDecoration(labelText: 'Manque ¥/pc', isDense: true))),
-            IconButton(padding: EdgeInsets.zero, constraints: const BoxConstraints(),
-                onPressed: onRemove, icon: const Icon(Icons.close, size: 15, color: DzColors.red)),
-          ]),
-          const SizedBox(height: 10),
-          Row(children: [
-            const SizedBox(width: 30),
-            SegmentedButton<String>(
-              style: ButtonStyle(
-                visualDensity: VisualDensity.compact,
-                backgroundColor: WidgetStateProperty.resolveWith((s) =>
-                    s.contains(WidgetState.selected) ? DzColors.lime : DzColors.card),
-                foregroundColor: WidgetStateProperty.resolveWith((s) =>
-                    s.contains(WidgetState.selected) ? DzColors.inkOnLime : DzColors.mut),
-                textStyle: const WidgetStatePropertyAll(TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700)),
-              ),
-              showSelectedIcon: false,
-              segments: const [
-                ButtonSegment(value: 'kg', label: Text('KG')),
-                ButtonSegment(value: 'piece', label: Text('PCS')),
-              ],
-              selected: {l.mode},
-              onSelectionChanged: (s) { l.mode = s.first; onChange(); },
+  Future<void> _choisirPhoto(_LigneCtrl l, VoidCallback onChange) async {
+    final img = await pickImage();
+    if (img == null || !mounted) return;
+    final (bytes, mime) =
+        await compresserImage(img.$1, img.$2, maxCote: 1200, qualite: 0.72);
+    if (!mounted) return;
+    if (bytes.length > 3000000) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Photo trop lourde même compressée — choisis-en une autre.')));
+      return;
+    }
+    l.photo = Uint8List.fromList(bytes);
+    l.photoMime = mime;
+    onChange();
+  }
+
+  Widget _choix(String valeur, String actuel, String texte, void Function(String) onTap) =>
+      GestureDetector(
+        onTap: () => onTap(valeur),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
+          decoration: BoxDecoration(
+            color: valeur == actuel ? DzColors.lime : DzColors.card,
+            borderRadius: BorderRadius.circular(99),
+          ),
+          child: Text(texte,
+              style: TextStyle(
+                  color: valeur == actuel ? DzColors.inkOnLime : DzColors.mut,
+                  fontSize: 11.5, fontWeight: FontWeight.w700)),
+        ),
+      );
+
+  Widget _sousTitre(String t) => Padding(
+        padding: const EdgeInsets.only(bottom: 7),
+        child: Text(t.toUpperCase(),
+            style: const TextStyle(color: DzColors.mut, fontSize: 9.5,
+                fontWeight: FontWeight.w700, letterSpacing: 1)),
+      );
+
+  Widget _ligneForm(int i, _LigneCtrl l, VoidCallback onChange, VoidCallback? onRemove) {
+    final etroit = MediaQuery.of(context).size.width < 760;
+
+    Widget champ(TextEditingController c, String label,
+            {bool nombre = true, int flex = 1}) =>
+        TextField(
+          controller: c,
+          keyboardType: nombre
+              ? const TextInputType.numberWithOptions(decimal: true)
+              : TextInputType.text,
+          textCapitalization:
+              nombre ? TextCapitalization.none : TextCapitalization.sentences,
+          onChanged: (_) => onChange(),
+          decoration: InputDecoration(labelText: label, isDense: true),
+        );
+
+    final photo = GestureDetector(
+      onTap: () => _choisirPhoto(l, onChange),
+      child: Container(
+        width: 52, height: 52,
+        alignment: Alignment.center,
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+            color: DzColors.card, borderRadius: BorderRadius.circular(12)),
+        child: l.photo != null
+            ? Image.memory(l.photo!, width: 52, height: 52, fit: BoxFit.cover)
+            : const Icon(Icons.add_a_photo_outlined, size: 19, color: DzColors.mut),
+      ),
+    );
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+      decoration: BoxDecoration(
+        color: DzColors.card2,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+            color: l.valide ? DzColors.lime.withValues(alpha: .3) : DzColors.line),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+          photo,
+          const SizedBox(width: 10),
+          Expanded(child: champ(l.produit, 'Produit', nombre: false)),
+          if (onRemove != null)
+            IconButton(
+              onPressed: onRemove,
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.close, size: 17, color: DzColors.red),
             ),
-            const SizedBox(width: 10),
-            Expanded(flex: 2, child: TextField(controller: l.prix, keyboardType: TextInputType.number, onChanged: (_) => onChange(),
-                decoration: InputDecoration(labelText: l.mode == 'kg' ? 'Payé DA/kg' : 'Payé DA/pc', isDense: true))),
-            const SizedBox(width: 12),
-            Expanded(flex: 3, child: Text(
-              l.valide
-                  ? '${l.poidsUnit.toStringAsFixed(2)} kg/pc · ${_f(l.gainKg)} DA/kg\n'
-                    'gain ${_f(l.gainTotal)} DA · manque ${_f(l.manqueTotal)} ¥'
-                  : 'remplis produit, qté, poids',
-              style: TextStyle(color: l.valide ? DzColors.txt : DzColors.mut, fontSize: 11, height: 1.4),
-            )),
+        ]),
+        const SizedBox(height: 14),
+
+        Row(children: [
+          Expanded(child: champ(l.qte, 'Quantité (pièces)')),
+          const SizedBox(width: 10),
+          Expanded(child: champ(l.kg, l.basePoids == 'lot'
+              ? 'Poids du lot (kg)' : 'Poids d’une pièce (kg)')),
+        ]),
+        const SizedBox(height: 10),
+        _sousTitre('Le poids saisi est celui'),
+        Wrap(spacing: 8, runSpacing: 8, children: [
+          _choix('lot', l.basePoids, 'du lot entier',
+              (v) { l.basePoids = v; onChange(); }),
+          _choix('piece', l.basePoids, 'd’une pièce',
+              (v) { l.basePoids = v; onChange(); }),
+        ]),
+        const SizedBox(height: 16),
+
+        champ(l.prix, switch (l.basePrix) {
+          'kg' => 'Payé (DA par kg)',
+          'lot' => 'Payé (DA pour tout le lot)',
+          _ => 'Payé (DA par pièce)',
+        }),
+        const SizedBox(height: 10),
+        _sousTitre('Le prix saisi est'),
+        Wrap(spacing: 8, runSpacing: 8, children: [
+          _choix('kg', l.basePrix, 'par kilo', (v) { l.basePrix = v; onChange(); }),
+          _choix('piece', l.basePrix, 'par pièce', (v) { l.basePrix = v; onChange(); }),
+          _choix('lot', l.basePrix, 'pour le lot', (v) { l.basePrix = v; onChange(); }),
+        ]),
+        const SizedBox(height: 16),
+
+        Row(children: [
+          Expanded(
+            child: champ(l.manque, l.manqueDevise == 'RMB'
+                ? 'Manque (¥ par pièce)' : 'Manque (DA par pièce)'),
+          ),
+          const SizedBox(width: 10),
+          Wrap(spacing: 8, children: [
+            _choix('RMB', l.manqueDevise, '¥', (v) { l.manqueDevise = v; onChange(); }),
+            _choix('DA', l.manqueDevise, 'DA', (v) { l.manqueDevise = v; onChange(); }),
           ]),
         ]),
-      );
+
+        const SizedBox(height: 14),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+          decoration: BoxDecoration(
+              color: DzColors.card, borderRadius: BorderRadius.circular(12)),
+          child: l.valide
+              ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(
+                      '${l.poidsTotal.toStringAsFixed(1)} kg au total · '
+                      '${l.poidsUnit.toStringAsFixed(2)} kg par pièce',
+                      style: const TextStyle(color: DzColors.txt2, fontSize: 11.5)),
+                  const SizedBox(height: 3),
+                  Text(
+                      'gain ${_f(l.gainPiece)} DA par pièce · '
+                      '${_f(l.gainKg)} DA/kg · ${_f(l.gainTotal)} DA pour le lot',
+                      style: const TextStyle(color: DzColors.lime,
+                          fontSize: 11.5, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 3),
+                  Text(
+                      'manque ${_f(l.manqueUnit)} '
+                      '${l.manqueDevise == 'RMB' ? '¥' : 'DA'} par pièce',
+                      style: const TextStyle(color: DzColors.amber, fontSize: 11.5)),
+                ])
+              : const Text('Remplis le produit, la quantité et le poids.',
+                  style: TextStyle(color: DzColors.mut, fontSize: 11.5)),
+        ),
+        if (etroit) const SizedBox(height: 2),
+      ]),
+    );
+  }
 }
 
 class _LigneCtrl {
@@ -329,19 +444,46 @@ class _LigneCtrl {
   final kg = TextEditingController();
   final manque = TextEditingController(text: '0');
   final prix = TextEditingController();
-  String mode = 'kg';
+
+  String basePrix = 'kg';
+  String basePoids = 'lot';
+  String manqueDevise = 'RMB';
+  Uint8List? photo;
+  String? photoMime;
 
   double _d(TextEditingController c) => double.tryParse(c.text.replaceAll(',', '.')) ?? 0;
   double get q => _d(qte);
-  double get poids => _d(kg);
-  double get poidsUnit => q > 0 ? poids / q : 0;
-  double get gainPiece => mode == 'kg' ? _d(prix) * poidsUnit : _d(prix);
+
+  double get poidsTotal => basePoids == 'lot' ? _d(kg) : _d(kg) * q;
+  double get poidsUnit => q > 0 ? poidsTotal / q : 0;
+
+  String get mode => basePrix == 'kg' ? 'kg' : 'piece';
+  double get prixUnitaire => switch (basePrix) {
+        'kg' => _d(prix),
+        'lot' => q > 0 ? _d(prix) / q : 0,
+        _ => _d(prix),
+      };
+
+  double get gainPiece =>
+      basePrix == 'kg' ? prixUnitaire * poidsUnit : prixUnitaire;
   double get gainTotal => gainPiece * q;
   double get gainKg => poidsUnit > 0 ? gainPiece / poidsUnit : 0;
-  double get manqueTotal => _d(manque) * q;
-  bool get valide => produit.text.trim().isNotEmpty && q > 0 && poids > 0;
+
+  double get manqueUnit => _d(manque);
+  double get manqueTotal => manqueUnit * q;
+
+  bool get valide => produit.text.trim().isNotEmpty && q > 0 && poidsTotal > 0;
+
   Map<String, dynamic> get body => {
-        'produit': produit.text.trim(), 'quantite': q, 'poids_total': poids,
-        'manque_rmb': _d(manque), 'mode': mode, 'prix': _d(prix),
+        'produit': produit.text.trim(),
+        'quantite': q,
+        'poids_total': poidsTotal,
+        'mode': mode,
+        'prix': prixUnitaire,
+        'manque_devise': manqueDevise,
+        'manque_rmb': manqueDevise == 'RMB' ? manqueUnit : 0,
+        if (manqueDevise == 'DA') 'manque_da': manqueUnit,
+        if (photo != null) 'photo': base64Encode(photo!),
+        if (photo != null) 'photo_mime': photoMime ?? 'image/jpeg',
       };
 }
